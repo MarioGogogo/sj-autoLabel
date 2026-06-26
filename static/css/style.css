@@ -1,0 +1,322 @@
+body {
+    background-color: #faf9ff;
+    color: #051a3e;
+    overflow: hidden;
+}
+
+.material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+    vertical-align: middle;
+}
+
+.workspace-grid {
+    background-image: linear-gradient(rgba(0, 61, 155, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 61, 155, 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+}
+
+.bounding-box {
+    position: absolute;
+    border-width: 1px;
+    pointer-events: none;
+    transition: all 0.2s ease;
+}
+
+.bounding-box:hover {
+    background-color: rgba(0, 61, 155, 0.1);
+    border-width: 2px;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: #f1f3ff;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #c3c6d6;
+    border-radius: 10px;
+}
+
+/* ===== 列表滚动性能 ===== */
+/* 隔离重绘范围：滚动/选中时浏览器只重算列表内部，不波及整页。 */
+#imageList {
+    contain: layout style;
+}
+
+/* 卡片图片固定解码尺寸，避免布局抖动；禁用动画期间的非必要过渡。 */
+#imageList .img-item img {
+    image-rendering: -webkit-optimize-contrast;
+}
+
+/* 尊重「减少动态」偏好。 */
+@media (prefers-reduced-motion: reduce) {
+    * {
+        transition: none !important;
+        animation: none !important;
+    }
+}
+
+/* ===== 通用通知卡片（右侧滑入，可堆叠） ===== */
+.notify-card {
+    pointer-events: auto;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: #ffffff;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(5, 26, 62, 0.12), 0 1px 3px rgba(5, 26, 62, 0.06);
+    border-left: 4px solid #003d9b;
+    animation: notify-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.notify-card.leaving {
+    animation: notify-out 0.22s ease forwards;
+}
+
+@keyframes notify-in {
+    from { opacity: 0; transform: translateX(120%); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes notify-out {
+    from { opacity: 1; transform: translateX(0); }
+    to   { opacity: 0; transform: translateX(120%); }
+}
+
+/* 状态色：左侧描边 + 图标颜色。 */
+.notify-card.success { border-left-color: #16a34a; }
+.notify-card.info    { border-left-color: #003d9b; }
+.notify-card.warning { border-left-color: #ea580c; }
+.notify-card.error   { border-left-color: #dc2626; }
+
+.notify-card .notify-icon {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    margin-top: 1px;
+}
+.notify-card.success .notify-icon { background: #16a34a; }
+.notify-card.info    .notify-icon { background: #003d9b; }
+.notify-card.warning .notify-icon { background: #ea580c; }
+.notify-card.error   .notify-icon { background: #dc2626; }
+.notify-card .notify-icon .material-symbols-outlined { font-size: 15px; }
+
+.notify-card .notify-body { flex: 1; min-width: 0; }
+.notify-card .notify-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #051a3e;
+    line-height: 1.4;
+}
+.notify-card .notify-message {
+    font-size: 12px;
+    color: #434654;
+    margin-top: 2px;
+    line-height: 1.5;
+}
+
+.notify-card .notify-close {
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #737685;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.notify-card .notify-close:hover { background: #e9edff; color: #051a3e; }
+.notify-card .notify-close .material-symbols-outlined { font-size: 16px; }
+
+/* ===== 顶部操作按钮 ===== */
+.btn-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 36px;
+    padding: 0 16px;
+    border-radius: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    font-size: 11px;
+    line-height: 16px;
+    cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.2s ease, background-color 0.2s ease,
+        border-color 0.2s ease, opacity 0.2s ease;
+    user-select: none;
+}
+
+.btn-action .material-symbols-outlined {
+    font-size: 18px;
+}
+
+/* 主按钮：导出 */
+.btn-primary {
+    color: #ffffff;
+    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
+    border: 1px solid transparent;
+    box-shadow: 0 2px 6px rgba(0, 61, 155, 0.28),
+        inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.btn-primary:hover {
+    box-shadow: 0 6px 16px rgba(0, 61, 155, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    filter: brightness(1.05);
+}
+
+/* 次按钮：保存 */
+.btn-outline {
+    color: #003d9b;
+    background: #ffffff;
+    border: 1px solid #003d9b;
+    box-shadow: 0 1px 2px rgba(5, 26, 62, 0.06);
+}
+
+.btn-outline:hover {
+    color: #ffffff;
+    background: #003d9b;
+    border-color: #003d9b;
+    box-shadow: 0 4px 12px rgba(0, 61, 155, 0.25);
+}
+
+/* 交互态 */
+.btn-action:active {
+    transform: scale(0.96);
+}
+
+.btn-action:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(12, 86, 208, 0.35);
+}
+
+/* ===== 画布舞台（缩放 / 平移） ===== */
+/* transform 由 JS 控制；过渡只在「非拖拽」时启用，拖拽时关掉以保证跟手。 */
+.canvas-stage {
+    transition: transform 0.18s ease;
+    transform-origin: center center;
+    will-change: transform;
+}
+
+/* 拖拽平移期间禁用过渡，避免滞后。 */
+.canvas-stage.dragging {
+    transition: none;
+    cursor: grabbing;
+}
+
+/* 检测框：基于舞台（图像区域）百分比定位，可点击 / 拖动。 */
+.canvas-stage .bbox {
+    position: absolute;
+    border-width: 2px;
+    border-style: solid;
+    border-radius: 2px;
+    box-sizing: border-box;
+    /* 框体本身中空穿透：鼠标可落到内部的小目标/画布上，不再被大框挡住。 */
+    pointer-events: none;
+    transition: box-shadow 0.12s ease, background-color 0.12s ease;
+}
+
+/* 边缘命中条：4 条边各自接收事件，中央无元素 → 鼠标穿透到内部小目标/画布。
+   用于选中 / 拖动整框。把手(.handle)独立处理 resize。 */
+.canvas-stage .bbox-edge {
+    position: absolute;
+    pointer-events: auto;
+    cursor: move;
+    /* 绘制模式下不抢占：交由 .drawing-mode 覆盖。 */
+}
+.canvas-stage .bbox-edge.top    { top: -6px;    left: -6px;    right: -6px;    height: 12px; }
+.canvas-stage .bbox-edge.bottom { bottom: -6px; left: -6px;    right: -6px;    height: 12px; }
+.canvas-stage .bbox-edge.left   { top: -6px;    left: -6px;    bottom: -6px;   width: 12px; }
+.canvas-stage .bbox-edge.right  { top: -6px;    right: -6px;   bottom: -6px;   width: 12px; }
+
+/* 绘制模式：所有框的边缘命中条让出事件，整个画布统一显示十字光标画框。 */
+.canvas-stage.drawing-mode .bbox-edge { pointer-events: none; }
+
+.canvas-stage .bbox:hover {
+    background-color: rgba(0, 61, 155, 0.08);
+}
+
+/* 选中态：实心高亮 + 外发光，把手由 JS 注入的 .handle 元素显示。 */
+.canvas-stage .bbox.selected {
+    box-shadow: 0 0 0 2px rgba(0, 61, 155, 0.45);
+    background-color: rgba(0, 61, 155, 0.12);
+    z-index: 5;
+}
+
+.canvas-stage .bbox-label {
+    position: absolute;
+    left: -1px;
+    top: -18px;
+    padding: 0 4px;
+    height: 16px;
+    line-height: 16px;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 2px 2px 0 0;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+/* 选中框的 8 个尺寸调整把手（覆盖伪元素的角点，改用真实元素以便逐个绑定方向）。 */
+.canvas-stage .bbox .handle {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    background: #fff;
+    border: 2px solid #003d9b;
+    border-radius: 50%;
+    pointer-events: auto;
+    z-index: 6;
+    box-sizing: border-box;
+}
+
+.canvas-stage .bbox .handle.nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.canvas-stage .bbox .handle.ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.canvas-stage .bbox .handle.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.canvas-stage .bbox .handle.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.canvas-stage .bbox .handle.n { left: 50%; top: -5px; transform: translateX(-50%); cursor: ns-resize; }
+.canvas-stage .bbox .handle.s { left: 50%; bottom: -5px; transform: translateX(-50%); cursor: ns-resize; }
+.canvas-stage .bbox .handle.w { left: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+.canvas-stage .bbox .handle.e { right: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+
+/* 画框预览（绘制过程中的临时框）。 */
+.canvas-stage .bbox.drawing {
+    border-style: dashed;
+    background-color: rgba(0, 61, 155, 0.1);
+}
+
+/* 工具栏按钮激活态。 */
+.tool-btn.active {
+    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
+    color: #ffffff;
+    box-shadow: 0 2px 6px rgba(0, 61, 155, 0.28);
+}
+
+/* 画布绘制模式光标。 */
+.canvas-stage.drawing-mode {
+    cursor: crosshair;
+}
+
+/* ===== 类别项选中态 ===== */
+.cat-item.active {
+    box-shadow: 0 0 0 1.5px rgba(0, 61, 155, 0.35) inset;
+    filter: brightness(1.03);
+}
+.cat-item.active .cat-dot {
+    box-shadow: 0 0 0 3px rgba(0, 61, 155, 0.18);
+}
+/* 选中态常显删除按钮（hover 由 group-hover 控制）。 */
+.cat-item.active .cat-del-btn {
+    opacity: 1;
+}

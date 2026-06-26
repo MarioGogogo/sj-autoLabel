@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+*.egg-info/
+
+# 运行时数据（旧架构产物，重构后将不再产生）
+static/uploads/
+static/thumbnails/
+
+# 标注产物（旧架构；新架构产物在用户自选的项目目录下，不在仓库内）
+labels/
+classes.txt
+分颜色缓存.json
+
+# 系统/IDE
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,31 @@
+{#
+  单张图片卡片，复用于：
+    1. 服务端首屏渲染（index.html 中 {% include %}）
+    2. 前端 JS 动态插入（通过 renderImageItem() 生成同样结构）
+
+  约定变量：img = { id, name, url, status: 'pending'|'done', ... }
+#}
+{% set is_done = img.status == 'done' %}
+<div class="img-item flex items-center gap-sm p-xs rounded transition-all group
+            {% if is_done %}bg-surface-container-highest border border-primary/30{% else %}hover:bg-surface-variant cursor-pointer{% endif %}"
+    data-id="{{ img.id }}" data-status="{{ img.status }}"
+    data-url="{{ img.url }}" data-size="{{ img.size or '' }}">
+    <div class="w-10 h-10 rounded overflow-hidden flex-shrink-0
+        {% if not is_done %}opacity-70 group-hover:opacity-100{% endif %}">
+        <img class="w-full h-full object-cover" loading="lazy" decoding="async"
+            src="{{ img.thumb_url or img.url }}" alt="{{ img.name }}" />
+    </div>
+    <div class="flex-1 min-w-0">
+        <p class="truncate text-xs font-label-mono {% if is_done %}text-primary{% else %}text-on-surface-variant group-hover:text-primary{% endif %}">
+            {{ img.name }}
+        </p>
+        <p class="img-status text-[10px] {% if is_done %}text-on-surface-variant{% else %}text-outline{% endif %}">
+            {% if is_done %}已处理{% else %}待处理{% endif %}
+        </p>
+    </div>
+    {% if is_done %}
+    <span class="material-symbols-outlined text-primary text-sm status-icon">check_circle</span>
+    {% else %}
+    <span class="material-symbols-outlined text-outline text-sm status-icon opacity-0 group-hover:opacity-100 transition-opacity">radio_button_unchecked</span>
+    {% endif %}
+</div>
