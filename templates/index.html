@@ -218,12 +218,12 @@
                         <span class="material-symbols-outlined">auto_awesome</span>
                     </button>
                     <div class="w-px h-6 bg-outline-variant mx-1"></div>
-                    <button
-                        class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                    <button id="undoBtn" type="button" title="撤销 (Ctrl/Cmd+Z)" disabled
+                        class="undo-redo-btn w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed">
                         <span class="material-symbols-outlined">undo</span>
                     </button>
-                    <button
-                        class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                    <button id="redoBtn" type="button" title="重做 (Ctrl/Cmd+Shift+Z)" disabled
+                        class="undo-redo-btn w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed">
                         <span class="material-symbols-outlined">redo</span>
                     </button>
                 </div>

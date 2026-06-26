@@ -77,6 +77,8 @@
     const modelGpu = document.getElementById("modelGpu");
     // 检测按钮 + 自动标注
     const detectBtn = document.getElementById("detectBtn");
+    const undoBtn = document.getElementById("undoBtn");
+    const redoBtn = document.getElementById("redoBtn");
     const autoLabelToggle = document.getElementById("autoLabelToggle");
     const autoLabelKnob = document.getElementById("autoLabelKnob");
     const autoLabelHint = document.getElementById("autoLabelHint");
@@ -223,6 +225,94 @@
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
     const nextBoxSeq = () => `${Date.now().toString(36)}_${(boxSeq++).toString(36)}`;
 
+    // ===================== 撤销 / 重做（快照式，按图片维度） =====================
+    // 设计要点：
+    //   - 快照式整体替换：每次改动后把 currentBoxes 深拷贝入栈。
+    //   - 按图片独立分栈：切换图片时该图的栈重建（初始快照 = 刚加载的标注），
+    //     撤销只影响当前图片，不跨图混乱。
+    //   - 每图上限 HISTORY_LIMIT 步，超出淘汰最旧。
+    //   - 程序写入（加载/自动识别等）通过 suppressHistory 标记，避免误入栈。
+    const HISTORY_LIMIT = 60;
+    const undoStack = new Map();   // imageName -> 快照数组（初始态作为栈底）
+    const redoStack = new Map();   // imageName -> 快照数组
+    let suppressHistory = false;   // true 期间 pushHistory 不入栈
+
+    /** 深拷贝当前框为可快照对象（仅标注字段，丢弃 DOM / 选中态）。 */
+    function snapshot() {
+        return currentBoxes.map((b) => ({
+            id: b.id, label: b.label, score: b.score,
+            x: b.x, y: b.y, w: b.w, h: b.h, hex: b.hex,
+        }));
+    }
+
+    /** 用快照恢复 currentBoxes（不重新入栈；undo/redo 也算改动，照常落盘）。 */
+    function restoreSnapshot(snap) {
+        suppressHistory = true;
+        currentBoxes = snap.map((b) => ({ ...b }));
+        selectedBoxId = null;
+        renderBoxes();
+        scheduleSaveLabels();
+        suppressHistory = false;
+        updateUndoRedoButtons();
+    }
+
+    /**
+     * 当前图片加载完成 / 切换图片时调用：以当前标注作为该图撤销栈的初始快照，
+     * 清空 redo。suppressed：调用方应已设 suppressHistory 避免重复入栈。
+     */
+    function resetHistoryForCurrent() {
+        const name = selectedName;
+        if (!name) return;
+        undoStack.set(name, [snapshot()]);
+        redoStack.set(name, []);
+        updateUndoRedoButtons();
+    }
+
+    /** 每个产生变更的动作完成后调用：推当前态进 undo 栈、清空 redo。 */
+    function pushHistory() {
+        if (suppressHistory) return;
+        const name = selectedName;
+        if (!name) return;
+        const u = undoStack.get(name) || [];
+        u.push(snapshot());
+        if (u.length > HISTORY_LIMIT) u.shift();  // 超出上限淘汰最旧
+        undoStack.set(name, u);
+        redoStack.set(name, []);                    // 新动作发生，redo 作废
+        updateUndoRedoButtons();
+    }
+
+    /** 撤销一步：当前态进 redo，回到 undo 栈顶。 */
+    function undo() {
+        const name = selectedName;
+        const u = undoStack.get(name) || [];
+        if (u.length <= 1) return;                  // 只剩初始态，无可撤销
+        const r = redoStack.get(name) || [];
+        r.push(snapshot());
+        redoStack.set(name, r);
+        u.pop();                                    // 弹出当前态
+        restoreSnapshot(u[u.length - 1]);           // 回到上一步
+    }
+
+    /** 重做一步：当前态进 undo，回到 redo 栈顶。 */
+    function redo() {
+        const name = selectedName;
+        const r = redoStack.get(name) || [];
+        if (!r.length) return;
+        const u = undoStack.get(name) || [];
+        u.push(snapshot());
+        undoStack.set(name, u);
+        restoreSnapshot(r.pop());
+    }
+
+    /** 根据「当前图」栈状态刷新按钮可用 / 禁用。 */
+    function updateUndoRedoButtons() {
+        const name = selectedName;
+        const uLen = (undoStack.get(name) || []).length;
+        const rLen = (redoStack.get(name) || []).length;
+        if (undoBtn) undoBtn.disabled = uLen <= 1;
+        if (redoBtn) redoBtn.disabled = rLen === 0;
+    }
+
     /** 查找指定 id 的框数据。 */
     function findBox(id) {
         return currentBoxes.find((b) => b.id === id) || null;
@@ -282,6 +372,7 @@
         currentBoxes = currentBoxes.filter((b) => b.id !== selectedBoxId);
         selectedBoxId = null;
         renderBoxes();
+        pushHistory();
         scheduleSaveLabels();
         return true;
     }
@@ -292,6 +383,7 @@
         currentBoxes = [];
         selectedBoxId = null;
         renderBoxes();
+        pushHistory();
         scheduleSaveLabels();
     }
 
@@ -445,6 +537,7 @@
             currentBoxes = await loadBoxesForImage(selectedName);
             selectedBoxId = null;
             renderBoxes();
+            resetHistoryForCurrent(); // 类别删除后重拉标注，重建撤销栈
         }
         showToast(`已删除类别「${cat.label}」`);
         return true;
@@ -674,7 +767,7 @@
                 changed = true; // 拖动 / 调尺寸完成
             }
             action = null;
-            if (changed) scheduleSaveLabels();
+            if (changed) { pushHistory(); scheduleSaveLabels(); }
         });
     }
 
@@ -896,6 +989,11 @@
                 e.preventDefault(); zoomBy(1 / ZOOM_STEP);
             } else if (e.key === "0" && (e.ctrlKey || e.metaKey)) {
                 e.preventDefault(); resetView();
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+                e.preventDefault();
+                e.shiftKey ? redo() : undo();
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
+                e.preventDefault(); redo();
             }
         });
     }
@@ -990,6 +1088,7 @@
         selectedBoxId = null;
         renderBoxes();
         pendingSaveName = null; // 新图刚加载，无需保存
+        resetHistoryForCurrent(); // 切图重建撤销栈：以当前标注为初始快照
 
         // 自动标注模式：切换图片时自动触发检测（去重保护在 detectCurrent 内）
         if (autoDetect) detectCurrent(false);
@@ -1535,7 +1634,8 @@
                 return;
             }
 
-            // 转换框数据到 currentBoxes 格式
+            // 转换框数据到 currentBoxes 格式（整批替换，先记录一次便于撤销整批识别）
+            suppressHistory = true; // 替换过程本身不入栈
             currentBoxes = (data.boxes || []).map((b, i) => ({
                 id: `${selectedName}_det_${i}`,
                 label: b.label,
@@ -1546,6 +1646,9 @@
             selectedBoxId = null;
             renderBoxes();
             detectedCache.add(cacheKey);
+            suppressHistory = false;
+            pushHistory();          // 识别结果作为一次可撤销的改动入栈
+            scheduleSaveLabels();   // 自动识别出的框也要落盘
 
             // 更新状态栏
             if (modelLatency) modelLatency.textContent = `延迟：${data.elapsed_ms ?? "--"}ms`;
@@ -1629,6 +1732,8 @@
 
         // ===== 目标检测按钮 + 自动标注开关 =====
         if (detectBtn) detectBtn.addEventListener("click", () => detectCurrent(true));
+        if (undoBtn) undoBtn.addEventListener("click", undo);
+        if (redoBtn) redoBtn.addEventListener("click", redo);
         if (autoLabelToggle) {
             autoLabelToggle.addEventListener("click", () => {
                 autoDetect = !autoDetect;
