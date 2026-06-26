@@ -1,14 +1,13 @@
 {#
-  单张图片卡片，复用于：
-    1. 服务端首屏渲染（index.html 中 {% include %}）
-    2. 前端 JS 动态插入（通过 renderImageItem() 生成同样结构）
+  单张图片卡片结构参考（前端 JS renderImageItem() 复刻同样结构）。
+  首屏不再服务端渲染图片列表（改由打开项目后 JS 渲染）。
 
-  约定变量：img = { id, name, url, status: 'pending'|'done', ... }
+  约定变量：img = { name(物理文件名, 唯一标识), url, status: 'pending'|'done', size }
 #}
 {% set is_done = img.status == 'done' %}
 <div class="img-item flex items-center gap-sm p-xs rounded transition-all group
             {% if is_done %}bg-surface-container-highest border border-primary/30{% else %}hover:bg-surface-variant cursor-pointer{% endif %}"
-    data-id="{{ img.id }}" data-status="{{ img.status }}"
+    data-name="{{ img.name }}" data-status="{{ img.status }}"
     data-url="{{ img.url }}" data-size="{{ img.size or '' }}">
     <div class="w-10 h-10 rounded overflow-hidden flex-shrink-0
         {% if not is_done %}opacity-70 group-hover:opacity-100{% endif %}">

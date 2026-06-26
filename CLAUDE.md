@@ -4,45 +4,71 @@
 
 ## 项目简介
 
-**视界标注专业版** —— 基于 Flask 的图像标注工作台，支持图片导入、AI 自动标注（规划中）、手动画框/编辑/删除、类别管理。当前为单页应用，三栏布局（左侧图片列表 / 中间画布 / 右侧模型与类别配置）。
+**视界标注专业版** —— 桌面端图像标注工作台。基于 Flask + pywebview，支持打开本地文件夹、手动画框、YOLO/ONNX 模型自动标注。单页应用，三栏布局（左侧图片列表 / 中间画布 / 右侧模型与类别配置）。
 
 ## 技术栈
 
 - **后端**：Flask 3.0.3，Python 3.14（见 `venv`）
 - **图像处理**：Pillow 10.4.0（缩略图生成）
-- **前端**：原生 HTML + Tailwind CSS（CDN）+ 原生 JS（无构建步骤、无框架）
-- **字体/图标**：Inter / JetBrains Mono / Material Symbols（Google Fonts CDN）
-- **持久化**：服务端文件系统 + Flask `session`（按浏览器会话隔离图片清单）
+- **前端**：原生 HTML + Tailwind CSS（预编译静态文件）+ 原生 JS（无框架）
+- **字体/图标**：Inter / JetBrains Mono / Material Symbols（本地 woff2，零 CDN 依赖）
+- **持久化**：服务端文件系统，所有读写基于用户自选的项目目录
 
-无数据库、无前端构建。改了文件直接刷新浏览器即可（开发期）。
+所有静态资源本地化，桌面端启动秒开，无需联网。
+
+### 修改了 Tailwind class / 配置之后
+
+```bash
+npm run build:css     # 重新扫描 HTML/JS 并生成 static/css/tailwind.css
+```
+
+> `tailwind.config.js` 与模板 `templates/**/*.html` / `static/js/**/*.js` 是 class 扫描源。
+> 首次 `npm install` 后即有 tailwindcss CLI，无需全局安装。
 
 ## 目录结构
 
 ```
-app.py                  Flask 入口：路由、上传、缩略图、session 管理
-requirements.txt        Flask + Pillow
+app.py                  Flask 入口：路由、项目、模型加载、推理 API
+detector.py             检测器模块：环境检测 + Worker 管理 + 进程内推理（全局单例）
+worker.py               独立推理 Worker 子进程（stdlib only，供外部 Python 环境运行）
+requirements.txt        Flask + Pillow + pywebview
+package.json            Tailwind CSS + 字体 npm 依赖
+tailwind.config.js      Tailwind 配置
 templates/
-  index.html            主页面（三栏布局 + 所有对话框/右键菜单 DOM）
-  _image_item.html      单张图片卡片（服务端首屏渲染，JS 动态插入时复用同结构）
+  index.html            主页面（三栏布局 + 对话框 + 右键菜单 + 环境配置面板)
+  _image_item.html      单张图片卡片
 static/
-  css/style.css         全部样式（Tailwind 之外的自定义类）
-  js/image_list.js      几乎所有前端逻辑（IIFE 单文件）
-  uploads/              原图（运行时生成）
-  thumbnails/           缩略图（运行时生成）
-index.html              ⚠️ 遗留的旧版首页（27KB），已被 templates/index.html 取代，可删
-test.py                 空文件，可删
+  css/
+    tailwind-input.css  Tailwind 构建入口
+    tailwind.css        预编译 Tailwind（24KB）
+    style.css           全部自定义样式
+  js/image_list.js      全部前端逻辑（IIFE 单文件）
+    → 关键函数：detectCurrent() / autoDetect / saveEnvConfig()
+  fonts/                本地字体（Inter + JetBrains Mono + Material Symbols）
 venv/                   本地虚拟环境
+~/.autolabels/
+  config.json           推理环境持久化配置（pythonPath）
 ```
 
 ## 常用命令
 
 ```bash
 source venv/bin/activate          # 激活虚拟环境
-python app.py                     # 开发服务器 http://127.0.0.1:5000
+python app.py                     # 桌面模式（pywebview 窗口，默认）
+python app.py --browser           # 浏览器模式（http://127.0.0.1:5055）
 ```
 
-> macOS 上 5000 端口常被「AirPlay 接收器」占用。若启动报 `Address already in use`，关掉 AirPlay Receiver 或换端口：
-> `app.app.run(port=5055)`（见 `__main__`，或临时 `FLASK_RUN_PORT=5055`）。
+> macOS 上 5000 端口常被「AirPlay 接收器」占用。桌面模式会自动找空闲端口（5055~5074），无需手动处理。
+>
+> Windows 上桌面模式依赖 Edge WebView2 运行时。若未安装，启动时会提示下载地址：
+> https://go.microsoft.com/fwlink/p/?LinkId=2124703
+
+### 桌面模式（pywebview）
+
+- 默认 `python app.py` 即桌面窗口，系统 WebView 包裹前端，无需外部浏览器。
+- macOS 使用 WKWebView（系统内置，不可卸载）；Windows 使用 Edge WebView2。
+- 传 `--browser` 回退到传统 Flask 开发服务器 + 浏览器模式。
+- pywebview 窗口关闭后，Flask 线程自动退出（daemon）。
 
 ### 生产跑（多线程，避免批量推理时请求排队）
 
@@ -57,20 +83,11 @@ waitress-serve --listen=127.0.0.1:5000 app:app
 
 ### 数据流
 
-- 图片上传 → 存 `static/uploads/<uuid>.<ext>`，生成缩略图到 `static/thumbnails/<uuid>.jpg`
-- 每张图记录存入 `session["images"]`：`{id, name, url, thumb_url, size, status, created_at}`
-- 前端通过 `/api/*` 接口读写；首屏由 Jinja 渲染已有图片，之后动态操作
-
-### URL → 本地路径的转换（关键，多处复用）
-
-`img["url"]` 形如 `/static/uploads/xxx.png`。转本地绝对路径：
-
-```python
-rel = url.lstrip("/").replace("static/", "", 1)
-abs_path = os.path.join(app.static_folder, rel)
-```
-
-`app.py` 的 `_remove()`、未来 `/api/detect` 都用这个模式。
+- 用户本地项目目录结构：`images/`（原图）+ `labels/`（YOLO txt）+ `classes.txt` + `colors.json`
+- 项目打开 → `POST /api/project/open` → 扫描 `images/` → 返回图片清单 + 类别列表
+- 图片读取 → `GET /api/project/image/<name>` → `send_from_directory`（basename 防穿越）
+- 标注保存 → `PUT /api/labels/<name>` → 写 `labels/<stem>.txt`（YOLO 中心点格式）
+- 所有路径操作基于 `ACTIVE_PROJECT` 全局变量
 
 ### 前端核心（`static/js/image_list.js`）
 
@@ -114,136 +131,65 @@ showToast("操作失败：" + err.message);
 
 ---
 
-## 参考章节：接入 AI 模型（规划中）
+## 参考章节：AI 模型推理
 
-> 当前画框是手动 + 演示数据（`genDemoBoxes(id)` 按图片 id 稳定生成假框）。
-> 接真实模型时，按此章节落地。坐标系统已就绪，前端 `renderBoxes()` 直接收 0~1 比例框即可。
-
-### 推理流程（端到端）
+### 两种推理模式
 
 ```
-浏览器 → POST /api/detect/<image_id> → Flask 读图 → GPU 推理 → 返回 0~1 归一化框 → 前端 renderBoxes()
+┌─ 进程内模式：当前 venv 有 torch/ultralytics 或 onnxruntime
+│    → detector.load() → detector.predict() 直接调用
+│
+└─ Worker 模式：当前 venv 无推理运行时，配置外部 Python 路径
+     → 启动 worker.py 子进程（HTTP server）
+     → detector 通过 localhost 调用 Worker
+     → 模型在 Worker 进程中只加载一次，常驻内存
 ```
 
-### 后端建议：`detector.py` + 两个接口
+### 推理环境选择流程
 
-模型**全局只加载一次**，别每次请求 `torch.load`（重载一次几秒起步）。
-
-```python
-# detector.py
-import torch
-from PIL import Image
-
-class Detector:
-    def __init__(self):
-        self.model = None
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.labels = ["行人", "车辆", "红绿灯", "犬只"]
-
-    def load(self, model_path):
-        # YOLO:  from ultralytics import YOLO; self.model = YOLO(model_path)
-        self.model = torch.load(model_path, map_location=self.device)
-        self.model.to(self.device).half()   # FP16 提速
-        self.model.eval()
-
-    def predict(self, image_path, conf=0.5):
-        img = Image.open(image_path).convert("RGB")
-        W, H = img.size
-        results = []
-        for box in raw_boxes:               # 按实际模型输出改写
-            results.append({
-                "label": self.labels[box.cls],
-                "score": float(box.conf),
-                "x": box.x / W, "y": box.y / H,   # 归一化（左上角）
-                "w": box.w / W, "h": box.h / H,
-            })
-        return results
-
-detector = Detector()
+```
+app 启动
+  ├─ 进程内 import torch/onnx → 直接推理 ✅
+  ├─ 没找到 → 读 ~/.autolabels/config.json
+  │    └─ 有 pythonPath → _probe_python() 探测
+  │         ├─ 该环境有 torch/onnx → 启动 Worker ✅
+  │         └─ 没有 → 拒绝保存
+  └─ 都没有 → 侧栏展示「推理环境」配置面板
+       ├─ 列出扫描到的 conda/venv 环境（可点击选用）
+       └─ 手动输入 Python 路径 → 保存 → 后端探测 → 启动 Worker
 ```
 
-```python
-# app.py 新增
-from detector import detector
+### 关键 API
 
-@app.route("/api/model/load", methods=["POST"])
-def load_model():
-    path = (request.get_json() or {}).get("path")
-    try:
-        detector.load(path); return jsonify({"ok": True})
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-@app.route("/api/detect/<image_id>", methods=["POST"])
-def detect(image_id):
-    if detector.model is None:
-        return jsonify({"ok": False, "error": "模型未加载"}), 400
-    img = next((i for i in _ensure_session_images() if i["id"] == image_id), None)
-    if not img:
-        return jsonify({"ok": False, "error": "图片不存在"}), 404
-    rel = img["url"].lstrip("/").replace("static/", "", 1)
-    abs_path = os.path.join(app.static_folder, rel)
-    conf = (request.get_json() or {}).get("conf", 0.5)
-    return jsonify({"ok": True, "boxes": detector.predict(abs_path, conf)})
-```
-
-### 前端：把演示框换成真框
-
-替换 `genDemoBoxes` 的调用点为 `await detectCurrent()`：
-
-```js
-async function detectCurrent() {
-    if (!selectedId) { showToast("请先选择图片"); return; }
-    showToast("识别中…", 6000);
-    try {
-        const r = await fetch(`/api/detect/${selectedId}`, {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({ conf: 0.5 }),
-        });
-        const data = await r.json();
-        if (!r.ok || !data.ok) throw new Error(data.error);
-        currentBoxes = data.boxes.map((b, i) => ({
-            id: `${selectedId}_det_${i}`,
-            label: b.label,
-            score: Math.round((b.score || 1) * 100),
-            x: b.x, y: b.y, w: b.w, h: b.h,
-            hex: hexOfLabel(b.label) || "#003d9b",
-        }));
-        selectedBoxId = null;
-        renderBoxes();
-        showToast(`识别完成：${data.boxes.length} 个目标`);
-    } catch (e) { showToast("识别失败：" + e.message); }
-}
-```
-
-### 性能（本地 RTX 5070）
-
-单张端到端延迟主要由「读图+解码+CPU↔GPU 搬运+推理+NMS」相加，5070 上：
-
-- YOLOv8n/v8s：单张 **5–15 ms**，体感「点哪框哪」
-- YOLOv8m/x：**15–40 ms**，仍流畅
-- 批量自动标注：**50–150 张/秒**（含 IO），几百张几秒跑完
-
-**真正的瓶颈不在 GPU，在这几个坑**：
-
-1. 模型重复加载 → 全局只 load 一次（见上）
-2. Flask 单线程 + `debug=True` → 批量请求排队，用 waitress
-3. 磁盘读图 + JPEG 解码（CPU 5–50ms，可能比推理还慢）→ 预解码/并发
-4. CPU↔GPU 搬运 → `pin_memory`、FP16、批量推理摊薄
-
-坐标格式务必在后端统一成「左上角 + 宽高 + 0~1 比例」：
-
-| 模型输出 | 转换 |
+| 端点 | 用途 |
 |---|---|
-| 像素 `[x1,y1,x2,y2]` | `x=x1/W, y=y1/H, w=(x2-x1)/W, h=(y2-y1)/H` |
-| YOLO `[cx,cy,w,h]` 归一化 | `x=cx-w/2, y=cy-h/2` |
+| `GET /api/env/check` | 环境检测 + 外部扫描 + 当前配置 `{pt, onnx, external, config}` |
+| `GET /api/env/config` | 读取持久化配置 `{pythonPath, hasWorker}` |
+| `POST /api/env/config` | 保存外部 Python 路径（探测通过后启动 Worker） |
+| `POST /api/model/load` | 加载模型（进程内或 Worker 转发 `/load`） |
+| `GET /api/model/status` | 返回 `{loaded, model, device, labels}` |
+| `POST /api/detect/<image_name>` | 单张推理（进程内或 Worker 转发 `/predict`） |
 
-### 模型形式
+### Worker 子进程（`worker.py`）
 
-- **ultralytics YOLO**：最省事，`model = YOLO("best.pt")` 自动用 GPU + FP16 + 自动 batch
-- **自定义 PyTorch 网络**：按你的网络前处理/输出格式写 `predict`（如 `vgg16_detector.pt`）
-- **ONNX Runtime**：不想装 PyTorch 时，`ort.InferenceSession` 部署轻量
+- **零额外依赖**：只使用 Python stdlib（`http.server`），外部环境只需 torch/onnx
+- **HTTP 协议**：监听 `127.0.0.1:5090-5120`
+- **端点**：`GET /health` / `POST /load` / `POST /predict` / `POST /shutdown`
+- **主进程通信**：启动后 stdout 输出 `WORKER_READY:<port>`，主进程解析端口后 HTTP 调用
+
+### 防重复机制
+
+- **服务端**：`detector._detected_images` Set，key = `"image_name@conf"`
+- **前端**：`detectedCache` Set + `AbortController` 取消进行中请求
+- **强制重检**：手动点「识别」按钮传 `force=true`
+- **换模型**：`detectedCache` / `_detected_images` 自动清空
+
+### 环境要求
+
+| 格式 | 需要 | 体积 |
+|---|---|---|
+| `.pt` | `pip install torch ultralytics` | ~2.5 GB |
+| `.onnx` | `pip install onnxruntime` | ~30 MB |
 
 ---
 
@@ -287,10 +233,9 @@ a.click();
 
 ## 待办 / 已知遗留
 
-- [ ] 接入真实模型，替换 `genDemoBoxes`（见上）
-- [ ] 「保存」「导出」按钮目前无后端实现（见「文件读写」章节）
-- [ ] 「自动标注」开关、置信度滑块尚未接线
+- [ ] 批量识别全部图片（`POST /api/detect/batch` + 进度轮询）
 - [ ] 撤销/重做栈（工具栏 undo/redo 按钮目前是装饰）
-- [ ] 类别删除时，当前图片里该类别的框未联动清理（演示数据特性）
+- [ ] 标注框的「双击改标签」「右键改类别」
+- [ ] 推理 Worker 目前只支持单张推理，后续可加 batch 接口
+- [ ] Material Symbols 字体（3.3MB）后续替换为子集 SVG，进一步缩短启动时间
 - [ ] 根目录 `index.html`（旧版）、空文件 `test.py` 可清理
-- [ ] 标注框的「双击改标签」「右键改类别」未实现

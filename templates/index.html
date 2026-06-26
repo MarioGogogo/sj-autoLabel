@@ -9,114 +9,8 @@
     <meta charset="utf-8" />
     <meta content="width=device-width, initial-scale=1.0" name="viewport" />
     <title>视界标注专业版 | AI 自动标注</title>
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-    <link
-        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap"
-        rel="stylesheet" />
-    <link
-        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap"
-        rel="stylesheet" />
-    <!-- Tailwind Configuration Verbatim -->
-    <script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    "colors": {
-                        "on-tertiary": "#ffffff",
-                        "secondary-fixed": "#d7e3fb",
-                        "surface": "#faf9ff",
-                        "on-primary-fixed": "#001848",
-                        "error": "#ba1a1a",
-                        "inverse-surface": "#1d3054",
-                        "on-primary": "#ffffff",
-                        "surface-container-low": "#f1f3ff",
-                        "primary": "#003d9b",
-                        "secondary-fixed-dim": "#bbc7de",
-                        "on-tertiary-fixed-variant": "#812800",
-                        "on-primary-fixed-variant": "#0040a2",
-                        "on-surface-variant": "#434654",
-                        "primary-fixed-dim": "#b2c5ff",
-                        "outline-variant": "#c3c6d6",
-                        "surface-dim": "#ccdaff",
-                        "surface-tint": "#0c56d0",
-                        "on-background": "#051a3e",
-                        "tertiary": "#7b2600",
-                        "on-secondary": "#ffffff",
-                        "surface-variant": "#d8e2ff",
-                        "on-secondary-fixed": "#101c2d",
-                        "tertiary-fixed-dim": "#ffb59b",
-                        "surface-container-highest": "#d8e2ff",
-                        "on-tertiary-container": "#ffc6b2",
-                        "on-error": "#ffffff",
-                        "primary-container": "#0052cc",
-                        "error-container": "#ffdad6",
-                        "secondary-container": "#d4e0f8",
-                        "secondary": "#535f73",
-                        "surface-container-high": "#e1e8ff",
-                        "surface-bright": "#faf9ff",
-                        "on-secondary-container": "#576377",
-                        "surface-container": "#e9edff",
-                        "tertiary-fixed": "#ffdbcf",
-                        "on-secondary-fixed-variant": "#3b475b",
-                        "inverse-on-surface": "#edf0ff",
-                        "tertiary-container": "#a33500",
-                        "on-primary-container": "#c4d2ff",
-                        "on-error-container": "#93000a",
-                        "on-tertiary-fixed": "#380d00",
-                        "on-surface": "#051a3e",
-                        "primary-fixed": "#dae2ff",
-                        "surface-container-lowest": "#ffffff",
-                        "outline": "#737685",
-                        "background": "#faf9ff"
-                    },
-                    "borderRadius": {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    "spacing": {
-                        "margin-desktop": "32px",
-                        "lg": "24px",
-                        "md": "16px",
-                        "sm": "8px",
-                        "xs": "4px",
-                        "margin-mobile": "16px",
-                        "base": "4px",
-                        "xl": "32px",
-                        "gutter": "16px",
-                        "toolbar-width": "64px",
-                        "sidebar-width": "280px"
-                    },
-                    "fontFamily": {
-                        "headline-md": ["Inter"],
-                        "label-sm": ["JetBrains Mono"],
-                        "headline-lg-mobile": ["Inter"],
-                        "body-lg": ["Inter"],
-                        "label-md": ["JetBrains Mono"],
-                        "headline-lg": ["Inter"],
-                        "headline-sm": ["Inter"],
-                        "body-md": ["Inter"],
-                        "label-caps": ["Inter"],
-                        "label-mono": ["JetBrains Mono"]
-                    },
-                    "fontSize": {
-                        "headline-md": ["24px", { "lineHeight": "32px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
-                        "label-sm": ["11px", { "lineHeight": "14px", "letterSpacing": "0.05em", "fontWeight": "500" }],
-                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
-                        "body-lg": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
-                        "label-md": ["12px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500" }],
-                        "headline-lg": ["30px", { "lineHeight": "38px", "letterSpacing": "-0.02em", "fontWeight": "600" }],
-                        "headline-sm": ["20px", { "lineHeight": "28px", "fontWeight": "600" }],
-                        "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
-                        "label-caps": ["11px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "700" }],
-                        "label-mono": ["12px", { "lineHeight": "16px", "letterSpacing": "0.02em", "fontWeight": "500" }]
-                    }
-                },
-            },
-        }
-    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/tailwind.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='fonts/fonts.css') }}" />
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
 </head>
 
@@ -138,11 +32,23 @@
         </div>
         <div class="flex items-center gap-md">
             <div class="flex items-center gap-sm">
+                <button id="openProjectTopBtn" type="button"
+                    class="btn-action btn-outline font-label-caps">
+                    <span class="material-symbols-outlined">folder_open</span>打开项目
+                </button>
+                <span id="projectPath" class="font-label-mono text-[11px] text-on-surface-variant max-w-[280px] truncate" title="">未打开项目</span>
+                <button id="refreshTopBtn" type="button" title="重新扫描加载图片"
+                    class="hidden w-7 h-7 flex items-center justify-center rounded-lg hover:bg-primary/10 text-primary transition-all flex-shrink-0">
+                    <span class="material-symbols-outlined text-[18px]">refresh</span>
+                </button>
+            </div>
+            <div class="h-8 w-[1px] bg-outline-variant mx-xs"></div>
+            <div class="flex items-center gap-sm">
                 <button type="button" class="btn-action btn-primary font-label-caps">
                     <span class="material-symbols-outlined">download</span>导出
                 </button>
-                <button type="button" class="btn-action btn-outline font-label-caps">
-                    <span class="material-symbols-outlined">save</span>保存
+                <button type="button" class="btn-action btn-primary font-label-caps">
+                    <span class="material-symbols-outlined">save</span>自动保存
                 </button>
             </div>
             <div class="h-8 w-[1px] bg-outline-variant mx-xs"></div>
@@ -164,23 +70,21 @@
                     <div class="w-10 h-10 bg-primary rounded flex items-center justify-center">
                         <span class="material-symbols-outlined text-on-primary">folder_open</span>
                     </div>
-                    <div>
-                        <h2 class="font-headline-sm text-primary leading-tight">阿尔法项目</h2>
+                    <div class="min-w-0">
+                        <h2 id="projectTitle" class="font-headline-sm text-primary leading-tight truncate">未打开项目</h2>
                         <p class="font-label-mono text-label-mono text-on-surface-variant">
                             <span id="imageCount">0</span> 张图片
                         </p>
                     </div>
                 </div>
-                <input id="fileInput" type="file" accept="image/*" multiple
-                    webkitdirectory directory class="hidden" />
                 <div class="flex gap-xs">
-                    <button id="importBtn" type="button"
+                    <button id="refreshBtn" type="button" title="重新扫描 images 目录"
                         class="flex-1 py-sm bg-surface-variant text-primary border border-primary/20 font-label-caps text-label-caps rounded-lg hover:bg-primary/10 transition-all flex items-center justify-center gap-xs">
-                        <span class="material-symbols-outlined text-sm">drive_folder_upload</span>导入文件夹
+                        <span class="material-symbols-outlined text-sm">refresh</span>刷新列表
                     </button>
-                    <button id="clearBtn" type="button" title="一键清空所有图片"
-                        class="px-sm py-sm border border-error/40 text-error hover:bg-error/5 font-label-caps text-label-caps rounded-lg transition-all flex items-center justify-center">
-                        <span class="material-symbols-outlined text-sm">delete_sweep</span>
+                    <button id="openProjectBtn" type="button" title="打开/切换项目文件夹"
+                        class="px-sm py-sm border border-primary/40 text-primary hover:bg-primary/5 font-label-caps text-label-caps rounded-lg transition-all flex items-center justify-center">
+                        <span class="material-symbols-outlined text-sm">drive_file_rename_outline</span>
                     </button>
                 </div>
             </div>
@@ -238,9 +142,24 @@
                 <span class="material-symbols-outlined text-6xl mb-md">image_search</span>
                 <p class="font-label-mono text-xs">从左侧选择图片，或导入文件夹开始标注</p>
             </div>
-            <!-- 图片画布：仅当有选中图片时显示 -->
-            <div id="canvasWrapper"
-                class="hidden relative max-w-5xl w-full aspect-[16/10] bg-surface-container-highest rounded-lg overflow-hidden shadow-xl border border-outline-variant/30 group">
+            <!-- 选中信息条（画布上方，不遮挡图片） -->
+            <div id="canvasArea" class="hidden flex flex-col items-center max-w-5xl w-full">
+                <div id="canvasInfoBar"
+                    class="mb-sm z-20 flex flex-col gap-1 px-sm py-xs bg-surface-container/95 backdrop-blur rounded-lg border border-outline-variant shadow">
+                    <div class="flex items-center gap-xs">
+                        <span class="material-symbols-outlined text-sm text-primary">checklist</span>
+                        <span id="canvasProgress" class="font-label-mono text-xs text-on-surface-variant">-</span>
+                    </div>
+                    <div class="flex items-center gap-xs">
+                        <span class="material-symbols-outlined text-sm text-primary">image</span>
+                        <span id="canvasName" class="font-label-mono text-xs text-on-surface truncate max-w-[320px]"></span>
+                        <span class="text-outline text-xs">·</span>
+                        <span id="canvasSize" class="font-label-mono text-xs text-on-surface-variant"></span>
+                    </div>
+                </div>
+                <!-- 图片画布：仅当有选中图片时显示 -->
+                <div id="canvasWrapper"
+                    class="relative w-full aspect-[16/10] bg-surface-container-highest rounded-lg overflow-hidden shadow-xl border border-outline-variant/30 group">
                 <!-- 可变换舞台：图片 + 检测框同处一层，缩放/平移天然同步 -->
                 <div id="canvasStage" class="canvas-stage absolute inset-0 flex items-center justify-center cursor-grab">
                     <div id="canvasFrame" class="relative inline-block">
@@ -250,22 +169,15 @@
                         <div id="canvasBoxes" class="absolute inset-0 pointer-events-none"></div>
                     </div>
                 </div>
-                <!-- 选中信息条 -->
-                <div
-                    class="absolute top-md left-1/2 -translate-x-1/2 z-20 flex items-center gap-xs px-sm py-xs bg-surface-container/95 backdrop-blur rounded-lg border border-outline-variant shadow">
-                    <span class="material-symbols-outlined text-sm text-primary">image</span>
-                    <span id="canvasName" class="font-label-mono text-xs text-on-surface truncate max-w-[280px]"></span>
-                    <span class="text-outline">·</span>
-                    <span id="canvasSize" class="font-label-mono text-[10px] text-on-surface-variant"></span>
-                </div>
                 <!-- 缩放指示 -->
                 <div id="canvasZoom"
                     class="absolute top-md right-md z-20 px-sm py-xs bg-surface-container/95 backdrop-blur rounded-lg border border-outline-variant font-label-mono text-[10px] text-on-surface-variant opacity-0 transition-opacity">
                     100%
                 </div>
-                <!-- Floating Toolbar -->
+                </div>
+                <!-- Floating Toolbar（画布下方，不遮挡图片） -->
                 <div
-                    class="absolute bottom-md left-1/2 -translate-x-1/2 flex items-center gap-xs p-1 bg-surface-container/95 backdrop-blur rounded-xl border border-outline-variant shadow-lg">
+                    class="mt-sm flex items-center gap-xs p-1 bg-surface-container/95 backdrop-blur rounded-xl border border-outline-variant shadow-lg">
                     <button id="zoomInBtn" type="button" title="放大 (Ctrl/Cmd + =)"
                         class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-primary transition-all">
                         <span class="material-symbols-outlined">zoom_in</span>
@@ -292,6 +204,20 @@
                         <span class="material-symbols-outlined">draw</span>
                     </button>
                     <div class="w-px h-6 bg-outline-variant mx-1"></div>
+                    <!-- 画框粗细滑块：仅画框模式可见 -->
+                    <div id="lineWidthGroup" class="hidden items-center gap-xs px-1">
+                        <span class="material-symbols-outlined text-sm text-on-surface-variant">line_weight</span>
+                        <input id="lineWidthSlider" type="range" min="1" max="8" value="2"
+                            class="w-16 h-1 bg-outline-variant/30 rounded-lg appearance-none cursor-pointer accent-primary"
+                            title="画框粗细" />
+                        <span id="lineWidthVal" class="font-label-mono text-[10px] text-on-surface-variant w-5 text-right">2</span>
+                    </div>
+                    <div class="w-px h-6 bg-outline-variant mx-1"></div>
+                    <button id="detectBtn" type="button" title="识别当前图片"
+                        class="tool-btn w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                        <span class="material-symbols-outlined">auto_awesome</span>
+                    </button>
+                    <div class="w-px h-6 bg-outline-variant mx-1"></div>
                     <button
                         class="w-10 h-10 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
                         <span class="material-symbols-outlined">undo</span>
@@ -301,7 +227,7 @@
                         <span class="material-symbols-outlined">redo</span>
                     </button>
                 </div>
-            </div>
+            </div><!-- /canvasArea -->
             <!-- 自定义右键菜单（画布区域专用） -->
             <div id="ctxMenu" data-ctx="canvas"
                 class="hidden fixed z-[100] min-w-[160px] py-xs bg-surface-container-lowest rounded-lg border border-outline-variant shadow-xl">
@@ -361,6 +287,66 @@
                     </div>
                 </div>
             </div>
+            <!-- 目录浏览对话框（打开项目） -->
+            <div id="browseDialog"
+                class="hidden fixed inset-0 z-[115] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
+                <div class="w-[480px] max-w-[92vw] h-[520px] max-h-[88vh] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+                    <div class="flex items-center gap-sm p-md border-b border-outline-variant">
+                        <span class="material-symbols-outlined text-primary">folder_open</span>
+                        <h3 class="font-headline-sm text-headline-sm text-primary flex-1">选择项目文件夹</h3>
+                        <button id="browseUpBtn" type="button" title="返回上级"
+                            class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                            <span class="material-symbols-outlined text-[20px]">arrow_upward</span>
+                        </button>
+                    </div>
+                    <div class="px-md py-sm border-b border-outline-variant">
+                        <div id="browseCurrentPath" class="font-label-mono text-xs text-on-surface truncate">/</div>
+                    </div>
+                    <div id="browseDirList" class="flex-1 overflow-y-auto custom-scrollbar p-xs">
+                        {# 子目录项由 JS 渲染 #}
+                    </div>
+                    <div class="p-md border-t border-outline-variant space-y-sm">
+                        <input id="browseManualPath" type="text" placeholder="或手动粘贴绝对路径（如 D:/yolo/persion）"
+                            class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-sm py-2 font-label-mono text-xs text-on-surface outline-none" />
+                        <div class="flex gap-sm">
+                            <button id="browseCancelBtn" type="button"
+                                class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
+                            <button id="browseSelectBtn" type="button"
+                                class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">选择此目录</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- 模型文件浏览对话框 -->
+            <div id="modelBrowseDialog"
+                class="hidden fixed inset-0 z-[116] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
+                <div class="w-[480px] max-w-[92vw] h-[520px] max-h-[88vh] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+                    <div class="flex items-center gap-sm p-md border-b border-outline-variant">
+                        <span class="material-symbols-outlined text-primary">memory</span>
+                        <h3 class="font-headline-sm text-headline-sm text-primary flex-1">选择模型文件</h3>
+                        <button id="modelBrowseUpBtn" type="button" title="返回上级"
+                            class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                            <span class="material-symbols-outlined text-[20px]">arrow_upward</span>
+                        </button>
+                    </div>
+                    <div class="px-md py-sm border-b border-outline-variant">
+                        <div id="modelBrowseCurrentPath" class="font-label-mono text-xs text-on-surface truncate">/</div>
+                    </div>
+                    <div id="modelBrowseList" class="flex-1 overflow-y-auto custom-scrollbar p-xs">
+                        {# 子目录 + 模型文件由 JS 渲染 #}
+                    </div>
+                    <div class="p-md border-t border-outline-variant space-y-sm">
+                        <input id="modelBrowseManualPath" type="text" placeholder="或手动粘贴模型文件绝对路径"
+                            class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-sm py-2 font-label-mono text-xs text-on-surface outline-none" />
+                        <div class="flex gap-sm">
+                            <button id="modelBrowseCancelBtn" type="button"
+                                class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
+                            <button id="modelBrowseSelectBtn" type="button"
+                                class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">选择此文件</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <!-- 通用确认对话框（可复用） -->
             <div id="confirmDialog"
                 class="hidden fixed inset-0 z-[130] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
@@ -402,15 +388,26 @@
                     <div>
                         <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">导入模型路径</label>
                         <div class="relative">
-                            <input
+                            <input id="modelPathInput"
                                 class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface focus:ring-0 outline-none"
-                                type="text" value="/models/vgg16_detector.pt" />
-                            <span
-                                class="material-symbols-outlined absolute right-xs top-1/2 -translate-y-1/2 text-on-surface-variant text-sm cursor-pointer">folder</span>
+                                type="text" value="" placeholder="选择或输入模型文件路径…" />
+                            <span id="modelBrowseBtn"
+                                class="material-symbols-outlined absolute right-xs top-1/2 -translate-y-1/2 text-on-surface-variant text-sm cursor-pointer hover:text-primary transition-colors">folder</span>
                         </div>
+                        <p id="modelHint" class="font-label-mono text-[10px] text-outline mt-xs hidden"></p>
                     </div>
-                    <button
+                    <button id="loadModelBtn"
                         class="w-full py-sm bg-primary text-on-primary font-label-caps text-label-caps rounded-lg hover:opacity-90 transition-all shadow-md">加载模型</button>
+                </div>
+            </div>
+            <!-- 推理环境配置（当前环境无 PyTorch/ONNX 时显示） -->
+            <div id="envConfigPanel" class="p-md border-b border-outline-variant hidden">
+                <h3
+                    class="font-label-caps text-label-caps text-outline mb-md flex items-center gap-xs uppercase tracking-wider">
+                    <span class="material-symbols-outlined text-[14px]">dns</span> 推理环境
+                </h3>
+                <div id="envConfigContent" class="space-y-sm">
+                    {# 由 JS 动态渲染 #}
                 </div>
             </div>
             <div class="p-md border-b border-outline-variant">
@@ -422,18 +419,18 @@
                     class="flex items-center justify-between p-sm bg-surface-container-high rounded-lg border border-outline-variant/30">
                     <span class="text-on-surface font-body-md">开启自动标注</span>
                     <button class="w-10 h-6 bg-outline-variant/30 rounded-full relative transition-all duration-200"
-                        id="autoLabelToggle"
-                        onclick="this.classList.toggle('bg-primary'); this.querySelector('div').classList.toggle('translate-x-4')">
-                        <div
+                        id="autoLabelToggle">
+                        <div id="autoLabelKnob"
                             class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full transition-transform duration-200 shadow-sm">
                         </div>
                     </button>
                 </div>
+                <p id="autoLabelHint" class="font-label-mono text-[10px] text-outline mt-xs hidden"></p>
                 <div class="mt-md">
-                    <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">置信度阈值 (85%)</label>
-                    <input
+                    <label id="confLabel" class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">置信度阈值 (50%)</label>
+                    <input id="confSlider"
                         class="w-full h-1 bg-outline-variant/30 rounded-lg appearance-none cursor-pointer accent-primary"
-                        max="100" min="0" type="range" value="85" />
+                        max="100" min="0" type="range" value="50" />
                 </div>
             </div>
             <div class="p-md">
@@ -456,13 +453,13 @@
         class="fixed bottom-0 left-0 w-full h-8 bg-surface-container-lowest border-t border-outline-variant flex items-center px-md justify-between z-50">
         <div class="flex items-center gap-lg">
             <div class="flex items-center gap-xs">
-                <div class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                <span class="font-label-mono text-label-mono text-secondary">模型状态：VGG16_Active</span>
+                <div id="modelStatusDot" class="w-2 h-2 rounded-full bg-outline-variant"></div>
+                <span id="modelStatusText" class="font-label-mono text-label-mono text-secondary">模型：未加载</span>
             </div>
             <div class="h-4 w-px bg-outline-variant"></div>
-            <span class="font-label-mono text-label-mono text-on-surface-variant">延迟：42ms</span>
+            <span id="modelLatency" class="font-label-mono text-label-mono text-on-surface-variant">延迟：--</span>
             <div class="h-4 w-px bg-outline-variant"></div>
-            <span class="font-label-mono text-label-mono text-on-surface-variant">GPU 使用率：12%</span>
+            <span id="modelGpu" class="font-label-mono text-label-mono text-on-surface-variant">GPU：--</span>
         </div>
         <div class="flex items-center gap-md">
             <a class="font-label-mono text-label-mono text-on-surface-variant hover:text-primary transition-colors cursor-pointer"

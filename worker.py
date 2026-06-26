@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""视界标注 — 推理 Worker 子进程。
+
+由主进程（app.py）在外部 Python 环境中启动，通过 HTTP 通信。
+使用该环境的 torch/ultralytics 或 onnxruntime 加载模型并执行推理。
+
+协议：
+  GET  /health              → {"ok": true, "loaded": bool, "device": "..."}
+  POST /load   {"path":"."} → {"ok": true, "device": "...", "labels": [...]}
+  POST /predict {"image_path":"...","conf":0.5} → {"ok": true, "boxes":[...], ...}
+
+启动方式：
+  python worker.py --model /path/to/model.pt --port 5099
+  python worker.py --port 5099          # 不预加载，等 /load 请求
+
+端口可用范围：5090-5120，由 --port 指定或自动选择。
+"""
+
+import argparse
+import json
+import os
+import sys
+import time
+import traceback
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+
+# ===== 模型持有者（模块级单例） =====
+
+class ModelHolder:
+    def __init__(self):
+        self.model = None
+        self.format = None
+        self.device = "cpu"
+        self.labels = []
+
+    def load(self, path: str):
+        ext = os.path.splitext(path)[1].lower()
+        if ext == ".pt":
+            self._load_pt(path)
+        elif ext == ".onnx":
+            self._load_onnx(path)
+        else:
+            raise ValueError(f"不支持格式：{ext}")
+        self.format = ext
+
+    def _load_pt(self, path: str):
+        import torch
+        from ultralytics import YOLO
+
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.model = YOLO(path)
+        self.model.to(self.device)
+        self.labels = list(self.model.names.values()) if hasattr(self.model, "names") else []
+
+    def _load_onnx(self, path: str):
+        import onnxruntime as ort
+
+        providers = ort.get_available_providers()
+        sess_opts = ort.SessionOptions()
+        sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        self.model = ort.InferenceSession(path, sess_opts, providers=providers)
+        self.device = providers[0] if providers else "cpu"
+        try:
+            meta = self.model.get_modelmeta()
+            if meta.custom_metadata_map:
+                names = meta.custom_metadata_map.get("names", "")
+                if names:
+                    self.labels = list(json.loads(names).values())
+        except Exception:
+            self.labels = []
+
+    def predict(self, image_path: str, conf: float = 0.5):
+        if self.format == ".pt":
+            return self._predict_pt(image_path, conf)
+        elif self.format == ".onnx":
+            return self._predict_onnx(image_path, conf)
+        raise RuntimeError("模型未加载")
+
+    def _predict_pt(self, image_path: str, conf: float):
+        from PIL import Image
+        img = Image.open(image_path)
+        W, H = img.size
+        results = self.model(image_path, conf=conf, verbose=False)
+        boxes = []
+        for r in results:
+            if r.boxes is None:
+                continue
+            for box in r.boxes:
+                cls_id = int(box.cls[0]) if hasattr(box.cls, "__iter__") else int(box.cls)
+                label = self.labels[cls_id] if cls_id < len(self.labels) else f"class_{cls_id}"
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                score = float(box.conf[0]) if hasattr(box.conf, "__iter__") else float(box.conf)
+                boxes.append({
+                    "label": label, "score": round(score * 100),
+                    "x": x1 / W, "y": y1 / H,
+                    "w": (x2 - x1) / W, "h": (y2 - y1) / H,
+                })
+        return boxes
+
+    def _predict_onnx(self, image_path: str, conf: float):
+        import numpy as np
+        from PIL import Image
+
+        img = Image.open(image_path).convert("RGB")
+        W, H = img.size
+        input_size = 640
+        img_resized = img.resize((input_size, input_size))
+        img_np = np.array(img_resized).astype(np.float32) / 255.0
+        img_np = img_np.transpose(2, 0, 1)[np.newaxis, ...]
+        input_name = self.model.get_inputs()[0].name
+        outputs = self.model.run(None, {input_name: img_np})
+        boxes = self._parse_onnx_output(outputs[0], W, H, input_size, conf)
+        return boxes
+
+    def _parse_onnx_output(self, output, orig_w, orig_h, input_size, conf):
+        import numpy as np
+        boxes = []
+        output = np.squeeze(output[0]) if isinstance(output, list) else np.squeeze(output)
+        if output.ndim != 2:
+            output = output.reshape(output.shape[0], -1)
+        num_classes = output.shape[0] - 4
+        for i in range(output.shape[1]):
+            scores = output[4:, i]
+            cls_id = int(np.argmax(scores))
+            score = float(scores[cls_id])
+            if score < conf:
+                continue
+            cx, cy, w, h = output[:4, i]
+            scale_x = orig_w / input_size
+            scale_y = orig_h / input_size
+            x = float((cx - w / 2) * scale_x) / orig_w
+            y = float((cy - h / 2) * scale_y) / orig_h
+            bw = float(w * scale_x) / orig_w
+            bh = float(h * scale_y) / orig_h
+            label = self.labels[cls_id] if cls_id < len(self.labels) else f"class_{cls_id}"
+            boxes.append({
+                "label": label, "score": round(score * 100),
+                "x": max(0, x), "y": max(0, y),
+                "w": min(bw, 1 - x), "h": min(bh, 1 - y),
+            })
+        boxes.sort(key=lambda b: b["score"], reverse=True)
+        return boxes
+
+
+holder = ModelHolder()
+
+
+# ===== HTTP Handler =====
+
+class WorkerHandler(BaseHTTPRequestHandler):
+    def log_message(self, format, *args):
+        pass  # 静默，避免污染 stdout
+
+    def _send_json(self, data, status=200):
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if length == 0:
+            return {}
+        return json.loads(self.rfile.read(length))
+
+    def do_GET(self):
+        if self.path == "/health":
+            self._send_json({
+                "ok": True,
+                "loaded": holder.model is not None,
+                "device": holder.device,
+                "format": holder.format,
+                "labels": holder.labels[:20],
+            })
+        else:
+            self._send_json({"ok": False, "error": "not found"}, 404)
+
+    def do_POST(self):
+        try:
+            if self.path == "/load":
+                data = self._read_body()
+                path = data.get("path", "")
+                if not path or not os.path.isfile(path):
+                    self._send_json({"ok": False, "error": "模型文件不存在"}, 400)
+                    return
+                holder.load(path)
+                self._send_json({
+                    "ok": True,
+                    "device": holder.device,
+                    "format": holder.format,
+                    "labels": holder.labels[:20],
+                })
+
+            elif self.path == "/predict":
+                if holder.model is None:
+                    self._send_json({"ok": False, "error": "模型未加载"}, 400)
+                    return
+                data = self._read_body()
+                image_path = data.get("image_path", "")
+                conf = float(data.get("conf", 0.5))
+                if not image_path or not os.path.isfile(image_path):
+                    self._send_json({"ok": False, "error": "图片不存在"}, 400)
+                    return
+                t0 = time.time()
+                boxes = holder.predict(image_path, conf)
+                elapsed = round((time.time() - t0) * 1000)
+                self._send_json({
+                    "ok": True,
+                    "boxes": boxes,
+                    "elapsed_ms": elapsed,
+                    "device": holder.device,
+                })
+
+            elif self.path == "/shutdown":
+                self._send_json({"ok": True})
+                # 在另一个线程中关闭，避免阻塞当前响应
+                import threading
+                threading.Thread(target=lambda: (time.sleep(0.1), sys.exit(0)), daemon=True).start()
+
+            else:
+                self._send_json({"ok": False, "error": "not found"}, 404)
+
+        except Exception as e:
+            self._send_json({"ok": False, "error": str(e)}, 500)
+
+
+# ===== 入口 =====
+
+def _pick_port(start=5090, tries=30):
+    import socket
+    for port in range(start, start + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            if s.connect_ex(("127.0.0.1", port)) != 0:
+                return port
+    return start
+
+
+def main():
+    parser = argparse.ArgumentParser(description="视界标注推理 Worker")
+    parser.add_argument("--port", type=int, default=0, help="监听端口（0=自动选择）")
+    parser.add_argument("--model", type=str, default="", help="启动时预加载的模型路径")
+    args = parser.parse_args()
+
+    port = args.port if args.port > 0 else _pick_port()
+
+    # 预加载模型（可选）
+    if args.model and os.path.isfile(args.model):
+        try:
+            holder.load(args.model)
+        except Exception as e:
+            print(f"WORKER_ERROR: {e}", file=sys.stderr, flush=True)
+
+    # 启动 HTTP server
+    server = HTTPServer(("127.0.0.1", port), WorkerHandler)
+
+    # 向主进程通告端口（stdout 这行是给主进程解析的）
+    print(f"WORKER_READY:{port}", flush=True)
+
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+if __name__ == "__main__":
+    main()

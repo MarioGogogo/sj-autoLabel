@@ -8,19 +8,19 @@
 (function () {
     "use strict";
 
-    const fileInput = document.getElementById("fileInput");
-    const importBtn = document.getElementById("importBtn");
     const imageList = document.getElementById("imageList");
     const emptyHint = document.getElementById("emptyHint");
     const imageCount = document.getElementById("imageCount");
 
     // ===== 中间展示区元素 =====
     const canvasEmpty = document.getElementById("canvasEmpty");
+    const canvasArea = document.getElementById("canvasArea");
     const canvasWrapper = document.getElementById("canvasWrapper");
     const canvasStage = document.getElementById("canvasStage");
     const canvasImage = document.getElementById("canvasImage");
     const canvasFrame = document.getElementById("canvasFrame");
     const canvasBoxes = document.getElementById("canvasBoxes");
+    const canvasProgress = document.getElementById("canvasProgress");
     const canvasName = document.getElementById("canvasName");
     const canvasSize = document.getElementById("canvasSize");
     const canvasZoom = document.getElementById("canvasZoom");
@@ -28,15 +28,61 @@
     const zoomOutBtn = document.getElementById("zoomOutBtn");
     const zoomResetBtn = document.getElementById("zoomResetBtn");
     const drawBoxBtn = document.getElementById("drawBoxBtn");
+    const lineWidthGroup = document.getElementById("lineWidthGroup");
+    const lineWidthSlider = document.getElementById("lineWidthSlider");
+    const lineWidthVal = document.getElementById("lineWidthVal");
     const ctxMenu = document.getElementById("ctxMenu");
     const categoryList = document.getElementById("categoryList");
     const addCatBtn = document.getElementById("addCatBtn");
+    const confSlider = document.getElementById("confSlider");
+    const confLabel = document.getElementById("confLabel");
     const catDialog = document.getElementById("catDialog");
     const catNameInput = document.getElementById("catNameInput");
     const catColorInput = document.getElementById("catColorInput");
     const catSwatch = document.getElementById("catSwatch");
     const catConfirmBtn = document.getElementById("catConfirmBtn");
     const catCancelBtn = document.getElementById("catCancelBtn");
+
+    // ===== 项目打开 / 目录浏览元素 =====
+    const projectTitle = document.getElementById("projectTitle");
+    const projectPathEl = document.getElementById("projectPath");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const refreshTopBtn = document.getElementById("refreshTopBtn");
+    const openProjectBtn = document.getElementById("openProjectBtn");
+    const openProjectTopBtn = document.getElementById("openProjectTopBtn");
+    const browseDialog = document.getElementById("browseDialog");
+    const browseCurrentPath = document.getElementById("browseCurrentPath");
+    const browseUpBtn = document.getElementById("browseUpBtn");
+    const browseDirList = document.getElementById("browseDirList");
+    const browseManualPath = document.getElementById("browseManualPath");
+    const browseSelectBtn = document.getElementById("browseSelectBtn");
+    const browseCancelBtn = document.getElementById("browseCancelBtn");
+
+    // ===== 模型加载元素 =====
+    const modelPathInput = document.getElementById("modelPathInput");
+    const modelBrowseBtn = document.getElementById("modelBrowseBtn");
+    const loadModelBtn = document.getElementById("loadModelBtn");
+    const modelHint = document.getElementById("modelHint");
+    const modelBrowseDialog = document.getElementById("modelBrowseDialog");
+    const modelBrowseCurrentPath = document.getElementById("modelBrowseCurrentPath");
+    const modelBrowseUpBtn = document.getElementById("modelBrowseUpBtn");
+    const modelBrowseList = document.getElementById("modelBrowseList");
+    const modelBrowseManualPath = document.getElementById("modelBrowseManualPath");
+    const modelBrowseSelectBtn = document.getElementById("modelBrowseSelectBtn");
+    const modelBrowseCancelBtn = document.getElementById("modelBrowseCancelBtn");
+    // 状态栏
+    const modelStatusDot = document.getElementById("modelStatusDot");
+    const modelStatusText = document.getElementById("modelStatusText");
+    const modelLatency = document.getElementById("modelLatency");
+    const modelGpu = document.getElementById("modelGpu");
+    // 检测按钮 + 自动标注
+    const detectBtn = document.getElementById("detectBtn");
+    const autoLabelToggle = document.getElementById("autoLabelToggle");
+    const autoLabelKnob = document.getElementById("autoLabelKnob");
+    const autoLabelHint = document.getElementById("autoLabelHint");
+    // 推理环境配置
+    const envConfigPanel = document.getElementById("envConfigPanel");
+    const envConfigContent = document.getElementById("envConfigContent");
 
     // ===== 通用弹窗元素 =====
     const confirmDialog = document.getElementById("confirmDialog");
@@ -48,7 +94,11 @@
     const toastEl = document.getElementById("toast");
     const notifyStack = document.getElementById("notifyStack");
 
-    let selectedId = null; // 当前选中图片 id
+    let selectedName = null; // 当前选中图片的物理文件名（唯一标识）
+    let currentProject = null; // 当前打开的项目元信息
+    let autoDetect = false; // 自动标注开关
+    let detectAbort = null; // AbortController，取消进行中的检测
+    let detectedCache = new Set(); // 客户端已检测图片 name 集合（去重）
 
     // ===== 画布视图状态（缩放 / 平移） =====
     const view = { scale: 1, x: 0, y: 0 };
@@ -166,6 +216,8 @@
     let currentBoxes = [];
     let selectedBoxId = null;
     let drawMode = false; // 画框工具是否开启
+    let lineWidth = 2;    // 画框粗细（px）
+    let confThreshold = 50; // 置信度阈值（0-100），后续接入模型检测时使用
     let boxSeq = 0; // 新建框序号，保证 id 唯一
 
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
@@ -188,7 +240,7 @@
             box.style.cssText =
                 `left:${(b.x * 100).toFixed(2)}%;top:${(b.y * 100).toFixed(2)}%;` +
                 `width:${(b.w * 100).toFixed(2)}%;height:${(b.h * 100).toFixed(2)}%;` +
-                `border-color:${hex};`;
+                `border-width:${lineWidth}px;border-color:${hex};`;
             const lbl = document.createElement("div");
             lbl.className = "bbox-label text-white";
             lbl.style.backgroundColor = hex;
@@ -205,6 +257,7 @@
             if (b.id === selectedBoxId) appendHandles(box);
             canvasBoxes.appendChild(box);
         });
+        refreshCategoryCounts();
     }
 
     /** 给框元素追加 8 个调整把手（nw/n/ne/e/se/s/sw/w）。 */
@@ -247,6 +300,7 @@
         drawMode = on;
         if (canvasStage) canvasStage.classList.toggle("drawing-mode", on);
         document.querySelectorAll(".tool-btn").forEach((b) => b.classList.toggle("active", on));
+        if (lineWidthGroup) lineWidthGroup.classList.toggle("hidden", !on);
         if (on) selectBox(null); // 进入绘制时取消选中，避免干扰
     }
 
@@ -262,6 +316,33 @@
         }
     }
 
+    /** 刷新右侧类别计数（全项目统计，数据由后端接口提供）。 */
+    let categoryCounts = {}; // { label: 全项目框数 }
+
+    function refreshCategoryCounts() {
+        if (!categoryList) return;
+        categoryList.querySelectorAll(".cat-item").forEach((item) => {
+            const cat = catByColor(item.dataset.cat);
+            const n = cat ? (categoryCounts[cat.label] || 0) : 0;
+            const span = item.querySelector(".cat-count");
+            if (span) span.textContent = n;
+        });
+    }
+
+    function setCategoryCounts(counts) {
+        categoryCounts = counts || {};
+        refreshCategoryCounts();
+    }
+
+    /** 调接口拉取全项目类别统计并刷新 UI。 */
+    async function fetchStats() {
+        try {
+            const resp = await fetch("/api/project/stats");
+            const data = await resp.json();
+            if (data.ok) setCategoryCounts(data.categoryCounts);
+        } catch (e) { /* 静默，统计非关键路径 */ }
+    }
+
     /** 渲染右侧类别列表（首屏 + 新增后调用）。 */
     function renderCategoryList() {
         if (!categoryList) return;
@@ -275,7 +356,7 @@
             item.innerHTML = `
                 <span class="cat-dot w-3 h-3 rounded-full flex-shrink-0" style="background:${c.hex}"></span>
                 <span class="flex-1 font-label-mono text-xs" style="color:${c.hex}">${escapeHtml(c.label)}</span>
-                <span class="text-[10px] font-label-mono text-outline">0 个检测</span>
+                <span class="cat-count text-xs font-label-mono text-outline">0</span>
                 <button type="button" title="删除类别"
                     class="cat-del-btn flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100">
                     <span class="material-symbols-outlined text-[16px]">close</span>
@@ -357,10 +438,11 @@
         }
         if (!resp.ok || !data.ok) { showToast(data.error || "删除失败"); return false; }
 
-        // class_id 重排了，重新从服务端拉取类别 + 当前图标注。
+        // class_id 重排了，重新从服务端拉取类别 + 当前图标注 + 统计。
         await loadCategories();
-        if (selectedId) {
-            currentBoxes = await loadBoxesForImage(selectedId);
+        fetchStats();
+        if (selectedName) {
+            currentBoxes = await loadBoxesForImage(selectedName);
             selectedBoxId = null;
             renderBoxes();
         }
@@ -770,14 +852,14 @@
 
     // ===================== 键盘：方向键切换 =====================
 
-    /** 按 DOM 顺序取当前选中项的前一个 / 后一个 id。 */
-    function neighborId(dir) {
+    /** 按 DOM 顺序取当前选中项的前一个 / 后一个文件名。 */
+    function neighborName(dir) {
         const items = Array.from(imageList.querySelectorAll(".img-item"));
         if (!items.length) return null;
-        const idx = items.findIndex((n) => n.dataset.id === selectedId);
-        if (idx === -1) return items[0].dataset.id;
+        const idx = items.findIndex((n) => n.dataset.name === selectedName);
+        if (idx === -1) return items[0].dataset.name;
         const next = items[idx + dir];
-        return next ? next.dataset.id : null;
+        return next ? next.dataset.name : null;
     }
 
     /** 绑定全局键盘快捷键。 */
@@ -788,11 +870,11 @@
             if (tag === "input" || tag === "textarea" || e.target.isContentEditable) return;
 
             if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
-                const id = neighborId(-1);
-                if (id) { e.preventDefault(); selectById(id); }
+                const name = neighborName(-1);
+                if (name) { e.preventDefault(); selectByName(name); }
             } else if (e.key === "ArrowRight" || e.key === "ArrowDown") {
-                const id = neighborId(1);
-                if (id) { e.preventDefault(); selectById(id); }
+                const name = neighborName(1);
+                if (name) { e.preventDefault(); selectByName(name); }
             } else if (e.key === "Delete" || e.key === "Backspace") {
                 // 删除当前选中的标注框。
                 if (selectedBoxId) { e.preventDefault(); deleteSelectedBox(); }
@@ -828,7 +910,7 @@
 
     /**
      * 生成单张图片卡片节点（与服务端 _image_item.html 结构保持一致）。
-     * @param {Object} img { id, name, url, status, size }
+     * @param {Object} img { name, url, status, size }
      */
     function renderImageItem(img) {
         const isDone = img.status === "done";
@@ -839,7 +921,7 @@
             ? "bg-surface-container-highest border border-primary/30"
             : "hover:bg-surface-variant cursor-pointer";
         item.className = `${baseClass} ${stateClass}`;
-        item.dataset.id = img.id;
+        item.dataset.name = img.name;
         item.dataset.status = img.status;
 
         const thumbOpacity = isDone ? "" : "opacity-70 group-hover:opacity-100";
@@ -876,15 +958,15 @@
      */
     async function selectImage(img) {
         // 切换前：若旧图有未保存改动，强制 flush（防抖不等）。
-        if (selectedId && selectedId !== img.id) {
+        if (selectedName && selectedName !== img.name) {
             try { await flushSaveLabels(); } catch (e) { /* 忽略，继续切图 */ }
         }
-        selectedId = img.id;
+        selectedName = img.name;
 
         // 选中态：列表项高亮（与「已处理」区分：用更明显的 primary 背景 + 左描边）。
         let activeNode = null;
         imageList.querySelectorAll(".img-item").forEach((node) => {
-            const isSelected = node.dataset.id === img.id;
+            const isSelected = node.dataset.name === img.name;
             node.classList.toggle("ring-2", isSelected);
             node.classList.toggle("ring-primary", isSelected);
             node.classList.toggle("bg-primary/5", isSelected);
@@ -900,20 +982,23 @@
         if (canvasName) canvasName.textContent = img.name;
         if (canvasSize) canvasSize.textContent = img.size ? formatSize(img.size) : "";
         if (canvasEmpty) canvasEmpty.classList.add("hidden");
-        if (canvasWrapper) canvasWrapper.classList.remove("hidden");
+        if (canvasArea) canvasArea.classList.remove("hidden");
 
         // 切换图片：重置视图 + 加载该图已有标注（替代演示框）。
         resetView();
-        currentBoxes = await loadBoxesForImage(img.id);
+        currentBoxes = await loadBoxesForImage(img.name);
         selectedBoxId = null;
         renderBoxes();
-        pendingSaveId = null; // 新图刚加载，无需保存
+        pendingSaveName = null; // 新图刚加载，无需保存
+
+        // 自动标注模式：切换图片时自动触发检测（去重保护在 detectCurrent 内）
+        if (autoDetect) detectCurrent(false);
     }
 
     /** 加载某图已有标注（YOLO txt 经后端转回左上角格式）。无则空。 */
-    async function loadBoxesForImage(imageId) {
+    async function loadBoxesForImage(imageName) {
         try {
-            const resp = await fetch(`/api/labels/${imageId}`);
+            const resp = await fetch(`/api/labels/${encodeURIComponent(imageName)}`);
             const data = await resp.json();
             if (!resp.ok || !data.ok) return [];
             return (data.boxes || []).map((b) => ({ ...b, id: "box_" + nextBoxSeq() }));
@@ -924,12 +1009,12 @@
 
     // ===== 自动保存（防抖 400ms） =====
     let saveTimer = null;
-    let pendingSaveId = null; // 正在等待保存的图片 id
+    let pendingSaveName = null; // 正在等待保存的图片文件名
 
     /** 调度一次保存（400ms 内连续操作合并）。 */
     function scheduleSaveLabels() {
-        if (!selectedId) return;
-        pendingSaveId = selectedId;
+        if (!selectedName) return;
+        pendingSaveName = selectedName;
         clearTimeout(saveTimer);
         saveTimer = setTimeout(flushSaveLabels, 400);
     }
@@ -937,15 +1022,15 @@
     /** 立即保存当前 pending 图的标注（快照后 PUT）。 */
     async function flushSaveLabels() {
         clearTimeout(saveTimer);
-        const id = pendingSaveId;
-        if (!id) return;
-        pendingSaveId = null;
+        const name = pendingSaveName;
+        if (!name) return;
+        pendingSaveName = null;
         // 快照当前框（label + 左上角坐标），避免保存中途被下一张改动。
         const boxes = currentBoxes.map((b) => ({
             label: b.label, x: b.x, y: b.y, w: b.w, h: b.h,
         }));
         try {
-            const resp = await fetch(`/api/labels/${id}`, {
+            const resp = await fetch(`/api/labels/${encodeURIComponent(name)}`, {
                 method: "PUT",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ boxes }),
@@ -956,10 +1041,71 @@
                 return;
             }
             const n = data.count || 0;
+            // 标注变更后刷新全项目类别统计。
+            fetchStats();
+            // 根据框数更新当前图片状态。
+            if (selectedName) {
+                const node = imageList.querySelector(`.img-item[data-name="${CSS.escape(selectedName)}"]`);
+                if (node) {
+                    if (n > 0 && node.dataset.status !== "done") {
+                        node.dataset.status = "done";
+                        node.classList.remove("hover:bg-surface-variant", "cursor-pointer");
+                        node.classList.add("bg-surface-container-highest", "border", "border-primary/30");
+                        const thumb = node.querySelector(".w-10.h-10");
+                        if (thumb) { thumb.classList.remove("opacity-70", "group-hover:opacity-100"); }
+                        const nameEl = node.querySelector("p.truncate");
+                        if (nameEl) {
+                            nameEl.classList.remove("text-on-surface-variant", "group-hover:text-primary");
+                            nameEl.classList.add("text-primary");
+                        }
+                        const statusEl = node.querySelector(".img-status");
+                        if (statusEl) {
+                            statusEl.classList.remove("text-outline");
+                            statusEl.classList.add("text-on-surface-variant");
+                            const sizeTip = statusEl.textContent.match(/·.*$/);
+                            statusEl.textContent = "已处理" + (sizeTip ? sizeTip[0] : "");
+                        }
+                        const icon = node.querySelector(".status-icon");
+                        if (icon) {
+                            icon.textContent = "check_circle";
+                            icon.classList.remove("text-outline", "opacity-0", "group-hover:opacity-100", "transition-opacity");
+                            icon.classList.add("text-primary");
+                        }
+                        if (node._img) node._img.status = "done";
+                    } else if (n === 0 && node.dataset.status !== "pending") {
+                        // 框全删了 → 回退为「待处理」。
+                        node.dataset.status = "pending";
+                        node.classList.add("hover:bg-surface-variant", "cursor-pointer");
+                        node.classList.remove("bg-surface-container-highest", "border", "border-primary/30");
+                        const thumb = node.querySelector(".w-10.h-10");
+                        if (thumb) { thumb.classList.add("opacity-70", "group-hover:opacity-100"); }
+                        const nameEl = node.querySelector("p.truncate");
+                        if (nameEl) {
+                            nameEl.classList.add("text-on-surface-variant", "group-hover:text-primary");
+                            nameEl.classList.remove("text-primary");
+                        }
+                        const statusEl = node.querySelector(".img-status");
+                        if (statusEl) {
+                            statusEl.classList.add("text-outline");
+                            statusEl.classList.remove("text-on-surface-variant");
+                            const sizeTip = statusEl.textContent.match(/·.*$/);
+                            statusEl.textContent = "待处理" + (sizeTip ? sizeTip[0] : "");
+                        }
+                        const icon = node.querySelector(".status-icon");
+                        if (icon) {
+                            icon.textContent = "radio_button_unchecked";
+                            icon.classList.add("text-outline", "opacity-0", "group-hover:opacity-100", "transition-opacity");
+                            icon.classList.remove("text-primary");
+                        }
+                        if (node._img) node._img.status = "pending";
+                    }
+                    updateProgress();
+                }
+            }
             showNotification({
                 type: "success",
                 title: "坐标保存成功",
-                message: `已保存 ${n} 个标注框`,
+                message: n > 0 ? `已保存 ${n} 个标注框` : "标注已清空",
             });
         } catch (e) {
             showNotification({ type: "error", title: "保存失败", message: e.message });
@@ -967,18 +1113,17 @@
     }
 
     /**
-     * 根据图片 id 在当前列表中查找记录并选中。
-     * （首屏服务端渲染的卡片只带 data-id，需回到节点上取原图地址。）
+     * 根据图片文件名在当前列表中查找记录并选中。
+     * （首屏服务端渲染的卡片只带 data-name，需回到节点上取原图地址。）
      */
-    function selectById(id) {
-        const node = imageList.querySelector(`.img-item[data-id="${id}"]`);
+    function selectByName(name) {
+        const node = imageList.querySelector(`.img-item[data-name="${CSS.escape(name)}"]`);
         if (!node) return;
         const imgTag = node.querySelector("img");
         // 动态插入的节点会缓存完整记录；首屏节点则从 DOM 现场取。
         const record = node._img || {
-            id: id,
+            name: name,
             url: node.dataset.url || (imgTag ? imgTag.getAttribute("src") : ""),
-            name: imgTag ? imgTag.getAttribute("alt") : "",
             status: node.dataset.status,
             size: node.dataset.size ? Number(node.dataset.size) : 0,
         };
@@ -991,132 +1136,523 @@
         if (emptyHint) emptyHint.classList.toggle("hidden", total > 0);
     }
 
-    /** 把上传返回的图片逐个插入列表（保持最新在最上）。 */
-    function appendImages(images) {
-        if (!images || !images.length) return;
-        let firstNode = null;
+    /** 更新画布上方进度条（已处理 / 总计）。 */
+    function updateProgress() {
+        if (!canvasProgress) return;
+        const items = imageList.querySelectorAll(".img-item");
+        const total = items.length;
+        const done = Array.from(items).filter((n) => n.dataset.status === "done").length;
+        canvasProgress.textContent = total
+            ? `已处理 ${done} / ${total} 张`
+            : "-";
+    }
+
+    /** 渲染项目图片列表（替换当前列表全部内容）。 */
+    function renderImageList(images) {
+        imageList.innerHTML = "";
+        if (!images || !images.length) {
+            refreshMeta(0);
+            return;
+        }
         images.forEach((img) => {
             const node = renderImageItem(img);
             node._img = img; // 缓存完整记录，供选中时取用
             node.dataset.url = img.url;
             node.dataset.size = img.size || "";
-            imageList.insertBefore(node, imageList.firstChild);
-            if (!firstNode) firstNode = node;
+            imageList.appendChild(node);
         });
-        // 导入后自动聚焦到第一张，便于立即在画布查看。
-        if (firstNode) selectById(firstNode.dataset.id);
+        refreshMeta(images.length);
+        updateProgress();
+        // 默认选中第一张并在画布展示。
+        const first = imageList.querySelector(".img-item");
+        if (first) selectByName(first.dataset.name);
     }
 
-    /** 上传并刷新。 */
-    async function uploadFiles(files) {
-        if (!files || !files.length) return;
-        const fd = new FormData();
-        const imgExt = /\.(png|jpe?g|gif|bmp|webp)$/i;
-        let valid = 0;
-        for (const f of files) {
-            // 文件夹导入时部分文件可能无 MIME，用扩展名兜底。
-            const isImage = f.type.startsWith("image/") || imgExt.test(f.name);
-            if (!isImage) continue;
-            fd.append("files", f);
-            valid++;
+    /** 调接口刷新并重渲染图片列表。 */
+    async function loadProjectImages() {
+        try {
+            const resp = await fetch("/api/project/refresh");
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "刷新失败");
+            renderImageList(data.images);
+            fetchStats();
+        } catch (e) {
+            showToast("加载图片失败：" + e.message);
         }
-        if (!valid) {
-            showToast("所选内容中没有图片文件");
+    }
+
+    // ===================== 目录浏览对话框 =====================
+
+    let browseParentPath = null; // 当前浏览目录的上级路径（由 API 返回）
+
+    /** 打开目录浏览对话框。 */
+    async function openBrowseDialog() {
+        if (!browseDialog) return;
+        browseDialog.classList.remove("hidden");
+        browseManualPath.value = "";
+        await loadBrowseDir("");
+    }
+
+    function closeBrowseDialog() {
+        if (browseDialog) browseDialog.classList.add("hidden");
+    }
+
+    /** 加载指定路径的子目录列表。 */
+    async function loadBrowseDir(path) {
+        if (!browseDirList || !browseCurrentPath) return;
+        browseDirList.innerHTML = `<div class="p-md text-center text-outline text-xs">加载中…</div>`;
+        try {
+            const params = path ? `?path=${encodeURIComponent(path)}` : "";
+            const resp = await fetch(`/api/browse${params}`);
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "浏览失败");
+            browseCurrentPath.textContent = data.current || "根目录";
+            browseParentPath = data.parent || null;
+            if (browseUpBtn) browseUpBtn.disabled = !browseParentPath;
+            browseDirList.innerHTML = "";
+            if (data.dirs && data.dirs.length) {
+                data.dirs.forEach((d) => {
+                    const item = document.createElement("div");
+                    item.className = "flex items-center gap-sm p-sm rounded cursor-pointer hover:bg-surface-variant transition-all";
+                    item.innerHTML = `
+                        <span class="material-symbols-outlined text-primary text-lg">folder</span>
+                        <span class="text-xs font-label-mono truncate">${escapeHtml(d.name)}</span>
+                    `;
+                    item.addEventListener("click", () => loadBrowseDir(d.path));
+                    browseDirList.appendChild(item);
+                });
+            } else {
+                // 无子目录：提示可选择当前目录（含 images/ 子目录的项目）
+                const info = document.createElement("div");
+                info.className = "p-md text-center text-outline text-xs";
+                info.textContent = "此目录下无子目录，可直接选择当前目录";
+                browseDirList.appendChild(info);
+            }
+        } catch (e) {
+            browseDirList.innerHTML = `<div class="p-md text-center text-error text-xs">加载失败：${escapeHtml(e.message)}</div>`;
+        }
+    }
+
+    /** 确认选择当前浏览目录作为项目根（手动输入优先）。 */
+    async function selectBrowseDir() {
+        const manual = (browseManualPath.value || "").trim();
+        const path = manual || browseCurrentPath.textContent;
+        if (!path || path === "根目录") {
+            showToast("请先选择或输入一个目录");
             return;
         }
+        await openProject(path);
+        closeBrowseDialog();
+    }
 
-        const original = importBtn.innerHTML;
-        importBtn.disabled = true;
-        importBtn.innerHTML = `<span class="material-symbols-outlined text-sm animate-spin">progress_activity</span>导入中…`;
+    /** 手动输入路径打开项目。 */
+    async function openManualPath() {
+        const path = (browseManualPath.value || "").trim();
+        if (!path) { showToast("请输入项目路径"); return; }
+        await openProject(path);
+        closeBrowseDialog();
+    }
 
+    // ===================== 项目打开 / 刷新 =====================
+
+    /** 打开项目并加载全部数据（图片 + 类别 + 颜色）。 */
+    async function openProject(path) {
         try {
-            const resp = await fetch("/api/upload", { method: "POST", body: fd });
+            const resp = await fetch("/api/project/open", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path }),
+            });
             const data = await resp.json();
-            if (!resp.ok || !data.ok) {
-                throw new Error(data.error || "上传失败");
+            if (!resp.ok || !data.ok) throw new Error(data.error || "打开失败");
+
+            currentProject = { path: data.projectPath, isNew: data.isNew };
+            // 更新顶部信息。
+            if (projectTitle) projectTitle.textContent = data.isNew ? "新项目（已初始化）" : "项目已打开";
+            if (projectPathEl) projectPathEl.textContent = data.projectPath;
+            if (refreshTopBtn) refreshTopBtn.classList.remove("hidden");
+
+            // 加载类别与颜色。
+            CATEGORIES = (data.categories || []).map((c) => ({
+                label: c.label,
+                hex: c.hex,
+                color: "cid_" + c.id,
+            }));
+            activeCategory = CATEGORIES[0] || activeCategory;
+            renderCategoryList();
+            if (CATEGORIES.length) selectCategory(activeCategory.color);
+
+            // 渲染图片列表 + 拉取全项目统计。
+            renderImageList(data.images);
+            fetchStats();
+
+            showNotification({
+                type: "success",
+                title: data.isNew ? "新项目已创建" : "项目已打开",
+                message: `${data.images.length} 张图片`,
+            });
+        } catch (e) {
+            showToast("打开项目失败：" + e.message);
+        }
+    }
+
+    /** 刷新当前项目图片列表。 */
+    async function refreshProject() {
+        if (!currentProject) {
+            showToast("请先打开项目");
+            return;
+        }
+        await loadProjectImages();
+    }
+
+    // ===================== 模型文件浏览与加载 =====================
+
+    let modelBrowseParentPath = null;
+
+    /** 支持的模型文件扩展名（传参给 /api/browse?files=...）。 */
+    const MODEL_EXTS = ".pt,.onnx";
+
+    /** 打开模型文件浏览对话框。 */
+    async function openModelBrowseDialog() {
+        if (!modelBrowseDialog) return;
+        modelBrowseDialog.classList.remove("hidden");
+        if (modelBrowseManualPath) modelBrowseManualPath.value = "";
+        await loadModelBrowseDir("");
+    }
+
+    function closeModelBrowseDialog() {
+        if (modelBrowseDialog) modelBrowseDialog.classList.add("hidden");
+    }
+
+    /** 加载指定路径的目录 + 模型文件列表。 */
+    async function loadModelBrowseDir(path) {
+        if (!modelBrowseList || !modelBrowseCurrentPath) return;
+        modelBrowseList.innerHTML = `<div class="p-md text-center text-outline text-xs">加载中…</div>`;
+        try {
+            const params = path ? `?path=${encodeURIComponent(path)}&files=${encodeURIComponent(MODEL_EXTS)}` : `?files=${encodeURIComponent(MODEL_EXTS)}`;
+            const resp = await fetch(`/api/browse${params}`);
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "浏览失败");
+            modelBrowseCurrentPath.textContent = data.current || "根目录";
+            modelBrowseParentPath = data.parent || null;
+            if (modelBrowseUpBtn) modelBrowseUpBtn.disabled = !modelBrowseParentPath;
+            modelBrowseList.innerHTML = "";
+
+            // 渲染子目录
+            if (data.dirs && data.dirs.length) {
+                data.dirs.forEach((d) => {
+                    const item = document.createElement("div");
+                    item.className = "flex items-center gap-sm p-sm rounded cursor-pointer hover:bg-surface-variant transition-all";
+                    item.innerHTML = `<span class="material-symbols-outlined text-primary text-lg">folder</span><span class="text-xs font-label-mono truncate">${escapeHtml(d.name)}</span>`;
+                    item.addEventListener("click", () => loadModelBrowseDir(d.path));
+                    modelBrowseList.appendChild(item);
+                });
             }
-            appendImages(data.images);
-            refreshMeta(data.total);
-        } catch (err) {
-            showToast("导入失败：" + err.message);
-        } finally {
-            importBtn.disabled = false;
-            importBtn.innerHTML = original;
-            fileInput.value = ""; // 允许重复选择同一文件
+            // 渲染模型文件
+            if (data.files && data.files.length) {
+                data.files.forEach((f) => {
+                    const item = document.createElement("div");
+                    item.className = "flex items-center gap-sm p-sm rounded cursor-pointer hover:bg-primary/10 transition-all border border-primary/20";
+                    item.innerHTML = `
+                        <span class="material-symbols-outlined text-primary text-lg">memory</span>
+                        <span class="text-xs font-label-mono text-primary truncate flex-1">${escapeHtml(f.name)}</span>
+                        <span class="text-[10px] text-outline font-label-mono">${formatSize(f.size)}</span>
+                    `;
+                    item.addEventListener("click", () => {
+                        if (modelBrowseManualPath) modelBrowseManualPath.value = f.path;
+                    });
+                    // 双击直接选择
+                    item.addEventListener("dblclick", () => {
+                        if (modelBrowseManualPath) modelBrowseManualPath.value = f.path;
+                        selectModelBrowseFile();
+                    });
+                    modelBrowseList.appendChild(item);
+                });
+            }
+            if ((!data.dirs || !data.dirs.length) && (!data.files || !data.files.length)) {
+                const info = document.createElement("div");
+                info.className = "p-md text-center text-outline text-xs";
+                info.textContent = "此目录下无子目录和模型文件";
+                modelBrowseList.appendChild(info);
+            }
+        } catch (e) {
+            modelBrowseList.innerHTML = `<div class="p-md text-center text-error text-xs">加载失败：${escapeHtml(e.message)}</div>`;
         }
     }
 
-    /** 一键清空：确认后调接口，清空列表与磁盘文件。 */
-    async function clearAll() {
-        const total = imageList.querySelectorAll(".img-item").length;
-        if (total === 0) return;
-        const ok = await showConfirm({
-            title: "清空图片",
-            message: `确定清空全部 ${total.toLocaleString()} 张图片吗？此操作不可撤销。`,
-            okText: "清空",
-            danger: true,
-        });
-        if (!ok) return;
+    /** 确认选择当前浏览的模型文件（手动输入优先）。 */
+    async function selectModelBrowseFile() {
+        const manual = (modelBrowseManualPath ? modelBrowseManualPath.value.trim() : "");
+        const dirPath = modelBrowseCurrentPath ? modelBrowseCurrentPath.textContent : "";
+        const path = manual || dirPath;
+        if (!path || path === "根目录") {
+            showToast("请先选择或输入一个模型文件路径");
+            return;
+        }
+        // 如果 path 是目录，提示选具体文件
+        if (!manual && path === dirPath) {
+            showToast("请选择一个模型文件（单击选中后双击确认，或手动输入完整路径）");
+            return;
+        }
+        // 后缀校验：仅 .pt / .onnx
+        const ext = "." + path.split(".").pop().toLowerCase();
+        if (ext !== ".pt" && ext !== ".onnx") {
+            await showConfirm({
+                title: "模型格式不支持",
+                message: `仅支持 .pt（PyTorch）或 .onnx（ONNX）格式的模型文件。\n\n当前路径后缀：${ext}`,
+                okText: "知道了",
+                danger: false,
+            });
+            return;
+        }
+        if (modelPathInput) modelPathInput.value = path;
+        closeModelBrowseDialog();
+    }
 
-        const clearBtn = document.getElementById("clearBtn");
-        const original = clearBtn.innerHTML;
-        clearBtn.disabled = true;
-        clearBtn.innerHTML = `<span class="material-symbols-outlined text-sm animate-spin">progress_activity</span>`;
+    /** 手动输入路径后直接使用。 */
+    async function openModelManualPath() {
+        const path = (modelBrowseManualPath ? modelBrowseManualPath.value.trim() : "");
+        if (!path) { showToast("请输入模型文件路径"); return; }
+        // 后缀校验：仅 .pt / .onnx
+        const ext = "." + path.split(".").pop().toLowerCase();
+        if (ext !== ".pt" && ext !== ".onnx") {
+            await showConfirm({
+                title: "模型格式不支持",
+                message: `仅支持 .pt（PyTorch）或 .onnx（ONNX）格式的模型文件。\n\n当前路径后缀：${ext}`,
+                okText: "知道了",
+                danger: false,
+            });
+            return;
+        }
+        if (modelPathInput) modelPathInput.value = path;
+        closeModelBrowseDialog();
+    }
+
+    /** 加载模型：先校验后缀，再调用 /api/model/load，更新状态栏。 */
+    async function loadModel() {
+        const path = (modelPathInput ? modelPathInput.value.trim() : "");
+        if (!path) { showToast("请先输入或选择模型文件路径"); return; }
+
+        // 客户端后缀校验：仅 .pt / .onnx。
+        const ext = "." + path.split(".").pop().toLowerCase();
+        if (ext !== ".pt" && ext !== ".onnx") {
+            const ok = await showConfirm({
+                title: "模型格式不支持",
+                message: `仅支持 .pt（PyTorch）或 .onnx（ONNX）格式的模型文件。\n\n当前文件后缀：${ext}`,
+                okText: "重新选择",
+                danger: false,
+            });
+            return;
+        }
+        if (loadModelBtn) {
+            loadModelBtn.disabled = true;
+            loadModelBtn.textContent = "加载中…";
+        }
+        try {
+            const resp = await fetch("/api/model/load", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "加载失败");
+
+            // 更新状态栏。
+            if (modelStatusDot) {
+                modelStatusDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+            }
+            if (modelStatusText) {
+                modelStatusText.textContent = `模型：${data.model.name}`;
+            }
+            if (modelLatency) modelLatency.textContent = "延迟：--";
+            if (modelGpu) {
+                const dev = data.device || "cpu";
+                modelGpu.textContent = `设备：${dev}`;
+            }
+            if (modelHint) {
+                const labels = data.labels && data.labels.length ? `（类别：${data.labels.join("、")}）` : "";
+                modelHint.textContent = `✓ 已加载 ${data.model.name}（${data.model.format}）${labels}`;
+                modelHint.classList.remove("hidden");
+            }
+            // 清空检测缓存（换了模型）
+            detectedCache.clear();
+
+            showNotification({
+                type: "success",
+                title: "模型已加载",
+                message: `${data.model.name}（${data.model.format}）→ ${data.device || "cpu"}`,
+            });
+        } catch (e) {
+            showToast("加载模型失败：" + e.message);
+            if (modelStatusDot) modelStatusDot.className = "w-2 h-2 rounded-full bg-error";
+            if (modelStatusText) modelStatusText.textContent = "模型：加载失败";
+            if (modelHint) {
+                modelHint.textContent = "✗ " + e.message;
+                modelHint.classList.remove("hidden");
+            }
+        } finally {
+            if (loadModelBtn) {
+                loadModelBtn.disabled = false;
+                loadModelBtn.textContent = "加载模型";
+            }
+        }
+    }
+
+    // ===================== 目标检测 =====================
+
+    /** 对当前选中图片执行目标检测。自动标注模式下在切换图片时调用。 */
+    async function detectCurrent(force = false) {
+        if (!selectedName) return;
+        if (!detectorLoaded()) { showToast("请先加载模型文件"); return; }
+
+        // 取消上一次未完成的请求
+        if (detectAbort) { detectAbort.abort(); detectAbort = null; }
+
+        // 去重：已检测过且非强制
+        const cacheKey = `${selectedName}@${confThreshold}`;
+        if (!force && detectedCache.has(cacheKey)) return;
+
+        detectAbort = new AbortController();
+        if (detectBtn) {
+            detectBtn.classList.add("animate-pulse");
+            detectBtn.style.color = "var(--color-primary, #003d9b)";
+        }
+        if (canvasProgress) canvasProgress.classList.remove("hidden");
 
         try {
-            const resp = await fetch("/api/images", { method: "DELETE" });
+            const resp = await fetch(`/api/detect/${encodeURIComponent(selectedName)}`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ conf: confThreshold / 100, force }),
+                signal: detectAbort.signal,
+            });
             const data = await resp.json();
-            if (!resp.ok || !data.ok) throw new Error(data.error || "清空失败");
-            imageList.querySelectorAll(".img-item").forEach((n) => n.remove());
-            selectedId = null;
-            if (canvasWrapper) canvasWrapper.classList.add("hidden");
-            if (canvasEmpty) canvasEmpty.classList.remove("hidden");
-            if (canvasImage) canvasImage.src = "";
-            if (canvasBoxes) canvasBoxes.innerHTML = "";
-            currentBoxes = [];
+            if (!resp.ok || !data.ok) throw new Error(data.error || "检测失败");
+
+            if (data.cached) {
+                // 服务端返回 cached=true，说明已经检测过（但客户端 cache 丢了）
+                detectedCache.add(cacheKey);
+                return;
+            }
+
+            // 转换框数据到 currentBoxes 格式
+            currentBoxes = (data.boxes || []).map((b, i) => ({
+                id: `${selectedName}_det_${i}`,
+                label: b.label,
+                score: b.score || 100,
+                x: b.x, y: b.y, w: b.w, h: b.h,
+                hex: b.hex || hexOfLabel(b.label) || "#003d9b",
+            }));
             selectedBoxId = null;
-            resetView();
-            refreshMeta(0);
-        } catch (err) {
-            showToast("清空失败：" + err.message);
+            renderBoxes();
+            detectedCache.add(cacheKey);
+
+            // 更新状态栏
+            if (modelLatency) modelLatency.textContent = `延迟：${data.elapsed_ms ?? "--"}ms`;
+            if (modelGpu) modelGpu.textContent = `设备：${data.device || "--"}`;
+
+            const count = data.boxes.length;
+            const label = autoDetect ? `自动标注：${count} 个目标` : `识别完成：${count} 个目标`;
+            showNotification({ type: count ? "success" : "info", title: label, message: selectedName });
+
+        } catch (e) {
+            if (e.name === "AbortError") return; // 被取消，忽略
+            // 自动模式下静默失败
+            if (!autoDetect) showToast("识别失败：" + e.message);
         } finally {
-            clearBtn.disabled = false;
-            clearBtn.innerHTML = original;
+            detectAbort = null;
+            if (detectBtn) {
+                detectBtn.classList.remove("animate-pulse");
+                detectBtn.style.color = "";
+            }
+            if (canvasProgress) canvasProgress.classList.add("hidden");
         }
     }
+
+    /** 检查模型是否已加载。 */
+    function detectorLoaded() {
+        // 通过状态栏文本判断（HACK：也可以维护一个 JS 变量）
+        return modelStatusDot && modelStatusDot.classList.contains("bg-emerald-500");
+    }
+
+    // ===================== 事件绑定 =====================
 
     /** 绑定事件。 */
     function bind() {
-        importBtn.addEventListener("click", () => fileInput.click());
-        fileInput.addEventListener("change", (e) => uploadFiles(e.target.files));
-        document.getElementById("clearBtn").addEventListener("click", clearAll);
+        // 打开项目按钮（侧栏 + 顶部）。
+        if (openProjectBtn) openProjectBtn.addEventListener("click", openBrowseDialog);
+        if (openProjectTopBtn) openProjectTopBtn.addEventListener("click", openBrowseDialog);
+
+        // 刷新按钮（侧栏 + 顶部）。
+        if (refreshBtn) refreshBtn.addEventListener("click", refreshProject);
+        if (refreshTopBtn) refreshTopBtn.addEventListener("click", refreshProject);
+
+        // 目录浏览对话框：返回上级。
+        if (browseUpBtn) browseUpBtn.addEventListener("click", () => loadBrowseDir(browseParentPath || ""));
+        if (browseSelectBtn) browseSelectBtn.addEventListener("click", selectBrowseDir);
+        if (browseCancelBtn) browseCancelBtn.addEventListener("click", closeBrowseDialog);
+        if (browseDialog) {
+            browseDialog.addEventListener("click", (e) => {
+                if (e.target === browseDialog) closeBrowseDialog();
+            });
+        }
+        // 手动路径输入：回车确认。
+        if (browseManualPath) {
+            browseManualPath.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") { e.preventDefault(); openManualPath(); }
+            });
+        }
+
+        // ===== 模型文件浏览对话框 =====
+        if (modelBrowseBtn) modelBrowseBtn.addEventListener("click", openModelBrowseDialog);
+        if (modelPathInput) modelPathInput.addEventListener("click", openModelBrowseDialog);
+        if (loadModelBtn) loadModelBtn.addEventListener("click", loadModel);
+        if (modelBrowseUpBtn) modelBrowseUpBtn.addEventListener("click", () => loadModelBrowseDir(modelBrowseParentPath || ""));
+        if (modelBrowseSelectBtn) modelBrowseSelectBtn.addEventListener("click", selectModelBrowseFile);
+        if (modelBrowseCancelBtn) modelBrowseCancelBtn.addEventListener("click", closeModelBrowseDialog);
+        if (modelBrowseDialog) {
+            modelBrowseDialog.addEventListener("click", (e) => {
+                if (e.target === modelBrowseDialog) closeModelBrowseDialog();
+            });
+        }
+        if (modelBrowseManualPath) {
+            modelBrowseManualPath.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") { e.preventDefault(); openModelManualPath(); }
+            });
+        }
+        // 回车键在模型路径输入框也可直接触发加载
+        if (modelPathInput) {
+            modelPathInput.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") { e.preventDefault(); loadModel(); }
+            });
+        }
+
+        // ===== 目标检测按钮 + 自动标注开关 =====
+        if (detectBtn) detectBtn.addEventListener("click", () => detectCurrent(true));
+        if (autoLabelToggle) {
+            autoLabelToggle.addEventListener("click", () => {
+                autoDetect = !autoDetect;
+                if (autoDetect) {
+                    autoLabelToggle.classList.add("bg-primary");
+                    autoLabelToggle.classList.remove("bg-outline-variant/30");
+                    if (autoLabelKnob) autoLabelKnob.classList.add("translate-x-4");
+                    if (autoLabelHint) { autoLabelHint.textContent = "切换图片时将自动识别"; autoLabelHint.classList.remove("hidden"); }
+                    // 立即对当前图片识别
+                    detectCurrent(false);
+                } else {
+                    autoLabelToggle.classList.remove("bg-primary");
+                    autoLabelToggle.classList.add("bg-outline-variant/30");
+                    if (autoLabelKnob) autoLabelKnob.classList.remove("translate-x-4");
+                    if (autoLabelHint) autoLabelHint.classList.add("hidden");
+                }
+            });
+        }
 
         // 事件委托：点击任意列表项即选中并在中间展示。
         imageList.addEventListener("click", (e) => {
             const item = e.target.closest(".img-item");
-            if (item) selectById(item.dataset.id);
+            if (item) selectByName(item.dataset.name);
         });
-        // 支持拖拽到侧边栏导入。
-        const aside = document.querySelector("aside.w-sidebar-width");
-        if (aside) {
-            ["dragenter", "dragover"].forEach((ev) =>
-                aside.addEventListener(ev, (e) => {
-                    e.preventDefault();
-                    aside.classList.add("bg-primary/5");
-                })
-            );
-            ["dragleave", "drop"].forEach((ev) =>
-                aside.addEventListener(ev, (e) => {
-                    e.preventDefault();
-                    aside.classList.remove("bg-primary/5");
-                })
-            );
-            aside.addEventListener("drop", (e) => {
-                if (e.dataTransfer && e.dataTransfer.files) {
-                    uploadFiles(e.dataTransfer.files);
-                }
-            });
-        }
 
         // 画布交互（缩放 / 平移）与键盘快捷键。
         bindCanvas();
@@ -1127,18 +1663,192 @@
         bindCategoryDialog();
         bindKeys();
 
-        // 画框工具按钮（工具栏第 4 个）切换绘制模式。
+        // 置信度阈值滑块。
+        if (confSlider && confLabel) {
+            confSlider.addEventListener("input", () => {
+                confThreshold = parseInt(confSlider.value, 10);
+                confLabel.textContent = `置信度阈值 (${confThreshold}%)`;
+            });
+        }
+
+        // 画框工具按钮切换绘制模式。
         if (drawBoxBtn) drawBoxBtn.addEventListener("click", () => setDrawMode(!drawMode));
+
+        // 画框粗细滑块。
+        if (lineWidthSlider) {
+            lineWidthSlider.addEventListener("input", () => {
+                lineWidth = parseInt(lineWidthSlider.value, 10);
+                if (lineWidthVal) lineWidthVal.textContent = lineWidth;
+                renderBoxes(); // 实时更新已有框的粗细
+            });
+            // 松手后自动失焦，避免阻挡 B 快捷键。
+            lineWidthSlider.addEventListener("change", () => {
+                lineWidthSlider.blur();
+            });
+        }
     }
 
-    /** 初始：加载类别 → 同步计数与事件 → 选中首张图。 */
+    /** 初始：检查环境 → 绑定事件 → 恢复项目。 */
     async function init() {
-        await loadCategories(); // 先加载类别（文件为准）
-        const items = imageList.querySelectorAll(".img-item");
-        refreshMeta(items.length);
         bind();
-        // 首屏若已有图片，默认选中第一张并在画布展示。
-        if (items.length) selectById(items[0].dataset.id);
+
+        // 启动时检测环境，更新模型提示
+        try {
+            const envResp = await fetch("/api/env/check");
+            const envData = await envResp.json();
+            if (envData.ok) {
+                const hasRuntime = envData.pt || envData.onnx;
+                const cfg = envData.config || {};
+                const hasConfig = cfg.hasWorker || !!cfg.pythonPath;
+
+                // 模型提示
+                if (modelHint) {
+                    if (hasRuntime) {
+                        const parts = [];
+                        if (envData.pt) parts.push(".pt（PyTorch）");
+                        if (envData.onnx) parts.push(".onnx（ONNX）");
+                        modelHint.textContent = `✓ 环境支持：${parts.join("、")}`;
+                    } else if (hasConfig) {
+                        modelHint.textContent = `🔗 推理环境已配置（外部 Python）`;
+                    } else {
+                        modelHint.textContent = "⚠ 未检测到推理环境，请在下方配置";
+                    }
+                    modelHint.classList.remove("hidden");
+                }
+
+                // 推理环境配置面板：当前无 runtime 且未配置 worker 时显示
+                if (!hasRuntime && !hasConfig && envConfigPanel && envConfigContent) {
+                    envConfigPanel.classList.remove("hidden");
+                    renderEnvConfigPanel(envData);
+                } else if (envConfigPanel) {
+                    envConfigPanel.classList.add("hidden");
+                }
+            }
+        } catch (e) { /* 静默 */ }
+
+        // 检查是否已有打开的项目（页面刷新恢复）。
+        try {
+            const resp = await fetch("/api/project/status");
+            const data = await resp.json();
+            if (data.opened) {
+                currentProject = { path: data.projectPath };
+                if (projectPathEl) projectPathEl.textContent = data.projectPath;
+                if (refreshTopBtn) refreshTopBtn.classList.remove("hidden");
+                await loadCategories();
+                await loadProjectImages();
+                if (projectTitle) projectTitle.textContent = "项目已恢复";
+            } else {
+                await loadCategories(); // 无项目时也加载类别（可能为空）
+                refreshMeta(0);
+            }
+        } catch (e) {
+            refreshMeta(0);
+        }
+    }
+
+    /** 渲染推理环境配置面板。 */
+    function renderEnvConfigPanel(envData) {
+        if (!envConfigContent) return;
+        let html = "";
+
+        const ext = envData.external || [];
+        if (ext.length) {
+            html += `<p class="font-label-mono text-[10px] text-on-surface-variant mb-sm">已检测到以下可用环境，点击选用：</p>`;
+            ext.forEach((e) => {
+                const rtLabel = e.ultralytics ? "PyTorch" : e.onnxruntime ? "ONNX" : "";
+                html += `
+                <div class="flex items-center gap-sm p-sm bg-surface rounded-lg border border-outline-variant cursor-pointer hover:border-primary transition-colors"
+                     data-env-path="${escapeHtml(e.python || "")}">
+                    <span class="material-symbols-outlined text-primary text-lg">memory</span>
+                    <div class="flex-1 min-w-0">
+                        <p class="font-label-mono text-xs text-on-surface truncate">${escapeHtml(e.name || "未知")}</p>
+                        <p class="font-label-mono text-[10px] text-outline">${escapeHtml(e.python || "")} · ${rtLabel}</p>
+                    </div>
+                    <span class="material-symbols-outlined text-outline text-sm">chevron_right</span>
+                </div>`;
+            });
+            html += `<div class="h-px bg-outline-variant my-sm"></div>`;
+        }
+
+        html += `
+            <p class="font-label-mono text-[10px] text-on-surface-variant mb-xs">或手动输入 Python 路径：</p>
+            <div class="flex gap-xs">
+                <input id="envPythonInput" type="text" placeholder="/opt/conda/envs/pytorch/bin/python"
+                    class="flex-1 bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none" />
+                <button id="envSaveBtn"
+                    class="py-2 px-md bg-primary text-on-primary font-label-caps text-label-caps rounded-lg hover:opacity-90 transition-all shadow-sm whitespace-nowrap">保存</button>
+            </div>
+            <p id="envConfigError" class="font-label-mono text-[10px] text-error hidden mt-xs"></p>
+        `;
+
+        envConfigContent.innerHTML = html;
+
+        // 绑定事件
+        const saveBtn = document.getElementById("envSaveBtn");
+        const pythonInput = document.getElementById("envPythonInput");
+        const errorEl = document.getElementById("envConfigError");
+
+        if (saveBtn && pythonInput) {
+            saveBtn.addEventListener("click", () => saveEnvConfig(pythonInput.value.trim()));
+            pythonInput.addEventListener("keydown", (e) => {
+                if (e.key === "Enter") saveEnvConfig(pythonInput.value.trim());
+            });
+        }
+
+        // 外部环境点击
+        envConfigContent.querySelectorAll("[data-env-path]").forEach((el) => {
+            el.addEventListener("click", () => saveEnvConfig(el.dataset.envPath));
+        });
+    }
+
+    /** 保存推理环境配置（外部 Python 路径）。 */
+    async function saveEnvConfig(pythonPath) {
+        if (!pythonPath) { showToast("请输入 Python 路径或选择一个外部环境"); return; }
+
+        const errorEl = document.getElementById("envConfigError");
+        if (errorEl) errorEl.classList.add("hidden");
+
+        const saveBtn = document.getElementById("envSaveBtn");
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = "…"; }
+
+        try {
+            const resp = await fetch("/api/env/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ pythonPath }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "保存失败");
+
+            // 更新状态栏
+            if (modelStatusDot) {
+                modelStatusDot.className = "w-2 h-2 rounded-full bg-emerald-500";
+            }
+            if (modelStatusText) {
+                modelStatusText.textContent = "推理环境已配置（Worker）";
+            }
+            if (modelGpu) {
+                const rt = data.runtime || {};
+                const info = rt.ultralytics ? `PyTorch ${rt.torch || ""}` : rt.onnxruntime ? `ONNX ${rt.onnxruntime || ""}` : "";
+                modelGpu.textContent = `外部：${info}`;
+            }
+            if (modelHint) {
+                modelHint.textContent = `🔗 已连接外部推理环境（Worker 模式）`;
+                modelHint.classList.remove("hidden");
+            }
+            if (envConfigPanel) envConfigPanel.classList.add("hidden");
+
+            showNotification({
+                type: "success",
+                title: "推理环境已配置",
+                message: pythonPath,
+            });
+        } catch (e) {
+            if (errorEl) { errorEl.textContent = e.message; errorEl.classList.remove("hidden"); }
+            showToast("配置失败：" + e.message);
+        } finally {
+            if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = "保存"; }
+        }
     }
 
     init();
