@@ -1956,6 +1956,62 @@
                 lineWidthSlider.blur();
             });
         }
+
+        // 顶部阶段时间线 stepper（智能标注 / 数据集训练 / 模型验证）。
+        bindStageNav();
+    }
+
+    // ===================== 顶部阶段时间线 stepper =====================
+    // 三个阶段（智能标注 → 数据集训练 → 模型验证）以圆形节点 + 连接线呈现。
+    // 点击节点切换主视图：智能标注=现有三栏工作台；另两个为占位页（即将上线）。
+    // 进度语义：当前阶段=进行中（呼吸放大），其前者=已完成（打勾），其后者=未到达（置灰）。
+    function bindStageNav() {
+        const nav = document.getElementById("stageNav");
+        if (!nav) return;
+        const steps = Array.from(nav.querySelectorAll(".step"));
+        const connectors = Array.from(nav.querySelectorAll(".step-connector"));
+        const STAGE_KEYS = ["annotate", "train", "eval"];
+
+        function setStage(activeIdx) {
+            if (activeIdx < 0 || activeIdx >= steps.length) return;
+            // 节点状态 + 内容：已完成→勾，进行中/未到→序号。
+            steps.forEach((s, i) => {
+                s.classList.remove("active", "completed");
+                const node = s.querySelector(".step-node");
+                if (i < activeIdx) {
+                    s.classList.add("completed");
+                    node.innerHTML = '<span class="material-symbols-outlined">check</span>';
+                } else {
+                    if (i === activeIdx) s.classList.add("active");
+                    node.textContent = String(i + 1);
+                }
+            });
+            // 当前阶段之前的连线变蓝，体现「已推进」。
+            connectors.forEach((c, i) => c.classList.toggle("passed", i < activeIdx));
+            // 视图切换。
+            const stageKey = steps[activeIdx].dataset.stage;
+            STAGE_KEYS.forEach((key) => {
+                const el = document.getElementById("stage-" + key);
+                if (el) el.classList.toggle("hidden", key !== stageKey);
+            });
+            // 离开标注阶段时退出绘制 / 分割模式，避免状态遗留到切回时。
+            if (stageKey !== "annotate") {
+                if (drawMode) setDrawMode(false);
+                if (samMode) setSamMode(false);
+            }
+        }
+
+        // 点击阶段节点切换。
+        steps.forEach((s, i) => s.addEventListener("click", () => setStage(i)));
+        // 占位页「返回智能标注」按钮。
+        document.querySelectorAll("[data-back-stage]").forEach((b) => {
+            b.addEventListener("click", () => {
+                const idx = steps.findIndex((s) => s.dataset.stage === b.dataset.backStage);
+                if (idx >= 0) setStage(idx);
+            });
+        });
+
+        setStage(0); // 默认停留在「智能标注」。
     }
 
     /** 初始：检查环境 → 绑定事件 → 恢复项目。 */

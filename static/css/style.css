@@ -329,3 +329,233 @@ body {
 .cat-item.active .cat-del-btn {
     opacity: 1;
 }
+
+/* ===== 顶部阶段时间线 stepper（智能标注 → 数据集训练 → 模型验证） ===== */
+/* 圆形节点 + 连接线：点击切换阶段；当前阶段呼吸放大、已完成打勾、连线随进度变蓝。 */
+.stage-nav {
+    gap: 0;
+}
+.stage-nav .step {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    flex-shrink: 0;
+}
+.stage-nav .step-node {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    font-family: "JetBrains Mono", monospace;
+    background: #ffffff;
+    border: 2px solid #c3c6d6;
+    color: #737685;
+    transition: background-color .25s cubic-bezier(.22, 1, .36, 1),
+        border-color .25s cubic-bezier(.22, 1, .36, 1),
+        color .25s cubic-bezier(.22, 1, .36, 1),
+        transform .25s cubic-bezier(.22, 1, .36, 1),
+        box-shadow .25s cubic-bezier(.22, 1, .36, 1);
+}
+.stage-nav .step-node .material-symbols-outlined {
+    font-size: 16px;
+}
+.stage-nav .step-label {
+    font-size: 11px;
+    letter-spacing: .04em;
+    font-weight: 600;
+    color: #737685;
+    white-space: nowrap;
+    transition: color .25s ease;
+}
+/* 连接线：顶对齐布局下，margin-top 把线压到圆心高度（28/2 - 1）；末端带箭头表示流向。 */
+.stage-nav .step-connector {
+    position: relative;
+    width: 84px;
+    flex: none;
+    height: 2px;
+    background: #c3c6d6;
+    margin-top: 13px;
+    border-radius: 2px;
+    transition: background .35s ease;
+}
+/* 末端三角箭头，颜色随连线（未到达=灰，已推进=蓝）。 */
+.stage-nav .step-connector::after {
+    content: "";
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 0;
+    height: 0;
+    border-left: 7px solid #c3c6d6;
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    transition: border-left-color .35s ease;
+}
+/* 已完成：实心渐变 + 勾。 */
+.stage-nav .step.completed .step-node {
+    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
+    border-color: transparent;
+    color: #ffffff;
+}
+.stage-nav .step.completed .step-label {
+    color: #434654;
+}
+/* 进行中：放大 + 光晕 + 呼吸。 */
+.stage-nav .step.active .step-node {
+    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
+    border-color: transparent;
+    color: #ffffff;
+    transform: scale(1.12);
+    box-shadow: 0 0 0 4px rgba(12, 86, 208, .15), 0 4px 12px rgba(0, 61, 155, .35);
+    animation: step-pulse 2.4s ease-in-out infinite;
+}
+.stage-nav .step.active .step-label {
+    color: #003d9b;
+    font-weight: 700;
+}
+@keyframes step-pulse {
+    0%, 100% { box-shadow: 0 0 0 4px rgba(12, 86, 208, .15), 0 4px 12px rgba(0, 61, 155, .35); }
+    50% { box-shadow: 0 0 0 7px rgba(12, 86, 208, .08), 0 4px 14px rgba(0, 61, 155, .40); }
+}
+/* 当前阶段之前的连线变蓝，体现「已推进」；箭头同步变蓝。 */
+.stage-nav .step-connector.passed {
+    background: linear-gradient(90deg, #0c56d0 0%, #003d9b 100%);
+}
+.stage-nav .step-connector.passed::after {
+    border-left-color: #003d9b;
+}
+/* hover 预览（仅未到达项变色，active/completed 维持自身态）。 */
+.stage-nav .step:hover .step-node {
+    border-color: #0c56d0;
+    color: #003d9b;
+}
+.stage-nav .step:hover .step-label {
+    color: #003d9b;
+}
+
+/* ===== 阶段视图切换 ===== */
+.stage-view {
+    display: flex;
+    flex: 1 1 0%;
+    min-width: 0;
+    overflow: hidden;
+}
+.stage-view.hidden {
+    display: none;
+}
+
+/* ===== 阶段占位页（训练 / 验证） ===== */
+.stage-placeholder {
+    align-items: center;
+    justify-content: center;
+    background-image: linear-gradient(rgba(0, 61, 155, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 61, 155, 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+}
+.stage-ph-card {
+    width: 420px;
+    max-width: 90vw;
+    text-align: center;
+    background: #ffffff;
+    border: 1px solid #c3c6d6;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(5, 26, 62, 0.08);
+    padding: 40px 32px 32px;
+}
+.stage-ph-icon {
+    width: 72px;
+    height: 72px;
+    margin: 0 auto 16px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, #d8e2ff 0%, #b2c5ff 100%);
+    color: #003d9b;
+}
+.stage-ph-icon .material-symbols-outlined {
+    font-size: 38px;
+}
+.stage-ph-title {
+    font-size: 22px;
+    font-weight: 700;
+    color: #051a3e;
+    margin: 0 0 8px;
+}
+.stage-ph-sub {
+    font-size: 13px;
+    color: #434654;
+    line-height: 1.6;
+    margin: 0 0 20px;
+}
+.stage-ph-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 24px;
+    text-align: left;
+}
+.stage-ph-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #434654;
+    padding: 6px 0;
+}
+.stage-ph-list .material-symbols-outlined {
+    font-size: 18px;
+    color: #16a34a;
+}
+.stage-ph-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #003d9b;
+    font-weight: 600;
+    background: #e9edff;
+    border: 1px solid #b2c5ff;
+    padding: 6px 14px;
+    border-radius: 9999px;
+    margin-bottom: 20px;
+}
+.stage-ph-badge .material-symbols-outlined {
+    font-size: 16px;
+}
+.stage-ph-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
+    color: #ffffff;
+    border: none;
+    cursor: pointer;
+    padding: 9px 18px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    font-family: "Inter", system-ui, sans-serif;
+    box-shadow: 0 2px 6px rgba(0, 61, 155, 0.28);
+    transition: filter .2s ease, transform .12s ease;
+}
+.stage-ph-back:hover {
+    filter: brightness(1.05);
+}
+.stage-ph-back:active {
+    transform: scale(0.96);
+}
+.stage-ph-back .material-symbols-outlined {
+    font-size: 18px;
+}

@@ -20,14 +20,22 @@
         class="bg-surface-container flex justify-between items-center px-md h-toolbar-width w-full z-50 border-b border-outline-variant fixed top-0">
         <div class="flex items-center gap-lg">
             <span class="font-headline-md text-headline-md font-bold text-primary">视界标注专业版</span>
-            <nav class="hidden md:flex gap-md items-center">
-                <a class="text-primary border-b-2 border-primary pb-1 font-label-caps text-label-caps" href="#">文件</a>
-                <a class="text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 font-label-caps text-label-caps px-2 py-1 rounded"
-                    href="#">编辑</a>
-                <a class="text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 font-label-caps text-label-caps px-2 py-1 rounded"
-                    href="#">模型</a>
-                <a class="text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 font-label-caps text-label-caps px-2 py-1 rounded"
-                    href="#">视图</a>
+            <!-- 阶段时间线 stepper：智能标注 → 数据集训练 → 模型验证 -->
+            <nav id="stageNav" class="stage-nav hidden md:flex items-center" aria-label="工作流阶段">
+                <button class="step active" type="button" data-stage="annotate">
+                    <span class="step-node"><span class="step-num">1</span></span>
+                    <span class="step-label">智能标注</span>
+                </button>
+                <span class="step-connector" aria-hidden="true"></span>
+                <button class="step" type="button" data-stage="train">
+                    <span class="step-node"><span class="step-num">2</span></span>
+                    <span class="step-label">数据集训练</span>
+                </button>
+                <span class="step-connector" aria-hidden="true"></span>
+                <button class="step" type="button" data-stage="eval">
+                    <span class="step-node"><span class="step-num">3</span></span>
+                    <span class="step-label">模型验证</span>
+                </button>
             </nav>
         </div>
         <div class="flex items-center gap-md">
@@ -63,6 +71,8 @@
         </div>
     </header>
     <main class="flex flex-1 pt-toolbar-width pb-8 overflow-hidden">
+        <!-- ===== 阶段 1：智能标注（默认显示） ===== -->
+        <div id="stage-annotate" class="stage-view flex-1 min-w-0">
         <!-- Left Column: SideNavBar (Images Panel) -->
         <aside class="w-sidebar-width bg-surface-container-low border-r border-outline-variant flex flex-col z-40">
             <div class="p-md border-b border-outline-variant">
@@ -297,36 +307,7 @@
                     </div>
                 </div>
             </div>
-            <!-- 目录浏览对话框（打开项目） -->
-            <div id="browseDialog"
-                class="hidden fixed inset-0 z-[115] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
-                <div class="w-[480px] max-w-[92vw] h-[520px] max-h-[88vh] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
-                    <div class="flex items-center gap-sm p-md border-b border-outline-variant">
-                        <span class="material-symbols-outlined text-primary">folder_open</span>
-                        <h3 class="font-headline-sm text-headline-sm text-primary flex-1">选择项目文件夹</h3>
-                        <button id="browseUpBtn" type="button" title="返回上级"
-                            class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
-                            <span class="material-symbols-outlined text-[20px]">arrow_upward</span>
-                        </button>
-                    </div>
-                    <div class="px-md py-sm border-b border-outline-variant">
-                        <div id="browseCurrentPath" class="font-label-mono text-xs text-on-surface truncate">/</div>
-                    </div>
-                    <div id="browseDirList" class="flex-1 overflow-y-auto custom-scrollbar p-xs">
-                        {# 子目录项由 JS 渲染 #}
-                    </div>
-                    <div class="p-md border-t border-outline-variant space-y-sm">
-                        <input id="browseManualPath" type="text" placeholder="或手动粘贴绝对路径（如 D:/yolo/persion）"
-                            class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-sm py-2 font-label-mono text-xs text-on-surface outline-none" />
-                        <div class="flex gap-sm">
-                            <button id="browseCancelBtn" type="button"
-                                class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
-                            <button id="browseSelectBtn" type="button"
-                                class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">选择此目录</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            {# 目录浏览对话框已移至 main 之后的「全局浮层」区，保证任意阶段可用 #}
             <!-- 模型文件浏览对话框 -->
             <div id="modelBrowseDialog"
                 class="hidden fixed inset-0 z-[116] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
@@ -357,34 +338,7 @@
                     </div>
                 </div>
             </div>
-            <!-- 通用确认对话框（可复用） -->
-            <div id="confirmDialog"
-                class="hidden fixed inset-0 z-[130] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
-                <div class="w-[360px] max-w-[92vw] bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl p-md">
-                    <div class="flex items-start gap-sm">
-                        <span id="confirmIcon"
-                            class="material-symbols-outlined text-[28px] text-error flex-shrink-0">help</span>
-                        <div class="flex-1 min-w-0">
-                            <h3 id="confirmTitle" class="font-headline-sm text-headline-sm text-on-surface mb-xs"></h3>
-                            <p id="confirmMsg" class="font-body-md text-sm text-on-surface-variant"></p>
-                        </div>
-                    </div>
-                    <div class="flex gap-sm mt-lg">
-                        <button id="confirmCancelBtn" type="button"
-                            class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
-                        <button id="confirmOkBtn" type="button"
-                            class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">确认</button>
-                    </div>
-                </div>
-            </div>
-            <!-- 通用轻提示 Toast -->
-            <div id="toast"
-                class="hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-[140] px-md py-sm bg-inverse-surface text-inverse-on-surface rounded-lg shadow-xl font-body-md text-sm">
-            </div>
-            <!-- 通用通知卡片容器（右侧滑入，可堆叠） -->
-            <div id="notifyStack"
-                class="fixed top-md right-md z-[150] flex flex-col gap-sm w-[320px] max-w-[92vw] pointer-events-none">
-            </div>
+            {# confirm/toast/notify 已移至 main 之后的「全局浮层」区 #}
         </section>
         <!-- Right Column: Configuration -->
         <aside
@@ -488,7 +442,107 @@
                 </button>
             </div>
         </aside>
+        </div><!-- /stage-annotate -->
+
+        <!-- ===== 阶段 2：数据集训练（占位，即将上线） ===== -->
+        <div id="stage-train" class="stage-view hidden stage-placeholder">
+            <div class="stage-ph-card">
+                <div class="stage-ph-icon"><span class="material-symbols-outlined">model_training</span></div>
+                <h2 class="stage-ph-title">数据集训练</h2>
+                <p class="stage-ph-sub">用「智能标注」产出的标注，训练你的专属检测模型</p>
+                <ul class="stage-ph-list">
+                    <li><span class="material-symbols-outlined">check_circle</span>基于 YOLO 等架构微调训练</li>
+                    <li><span class="material-symbols-outlined">check_circle</span>一键导出训练集并启动训练</li>
+                    <li><span class="material-symbols-outlined">check_circle</span>实时 loss / mAP / 训练曲线监控</li>
+                </ul>
+                <span class="stage-ph-badge"><span class="material-symbols-outlined">schedule</span>该阶段即将上线</span>
+                <div>
+                    <button class="stage-ph-back" type="button" data-back-stage="annotate">
+                        <span class="material-symbols-outlined">arrow_back</span>返回智能标注
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ===== 阶段 3：模型验证（占位，即将上线） ===== -->
+        <div id="stage-eval" class="stage-view hidden stage-placeholder">
+            <div class="stage-ph-card">
+                <div class="stage-ph-icon"><span class="material-symbols-outlined">fact_check</span></div>
+                <h2 class="stage-ph-title">模型验证</h2>
+                <p class="stage-ph-sub">在验证集上评估训练所得模型的精度与泛化能力</p>
+                <ul class="stage-ph-list">
+                    <li><span class="material-symbols-outlined">check_circle</span>mAP / Precision / Recall 指标</li>
+                    <li><span class="material-symbols-outlined">check_circle</span>预测 vs 标注 逐图对比</li>
+                    <li><span class="material-symbols-outlined">check_circle</span>混淆矩阵与错误样本分析</li>
+                </ul>
+                <span class="stage-ph-badge"><span class="material-symbols-outlined">schedule</span>该阶段即将上线</span>
+                <div>
+                    <button class="stage-ph-back" type="button" data-back-stage="annotate">
+                        <span class="material-symbols-outlined">arrow_back</span>返回智能标注
+                    </button>
+                </div>
+            </div>
+        </div>
     </main>
+    <!-- ===== 全局浮层（脱离 stage 切换，任意阶段可用） ===== -->
+    <!-- 目录浏览对话框（打开项目） -->
+    <div id="browseDialog"
+        class="hidden fixed inset-0 z-[115] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
+        <div class="w-[480px] max-w-[92vw] h-[520px] max-h-[88vh] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+            <div class="flex items-center gap-sm p-md border-b border-outline-variant">
+                <span class="material-symbols-outlined text-primary">folder_open</span>
+                <h3 class="font-headline-sm text-headline-sm text-primary flex-1">选择项目文件夹</h3>
+                <button id="browseUpBtn" type="button" title="返回上级"
+                    class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                    <span class="material-symbols-outlined text-[20px]">arrow_upward</span>
+                </button>
+            </div>
+            <div class="px-md py-sm border-b border-outline-variant">
+                <div id="browseCurrentPath" class="font-label-mono text-xs text-on-surface truncate">/</div>
+            </div>
+            <div id="browseDirList" class="flex-1 overflow-y-auto custom-scrollbar p-xs">
+                {# 子目录项由 JS 渲染 #}
+            </div>
+            <div class="p-md border-t border-outline-variant space-y-sm">
+                <input id="browseManualPath" type="text" placeholder="或手动粘贴绝对路径（如 D:/yolo/persion）"
+                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-sm py-2 font-label-mono text-xs text-on-surface outline-none" />
+                <div class="flex gap-sm">
+                    <button id="browseCancelBtn" type="button"
+                        class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
+                    <button id="browseSelectBtn" type="button"
+                        class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">选择此目录</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 通用确认对话框（可复用） -->
+    <div id="confirmDialog"
+        class="hidden fixed inset-0 z-[130] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
+        <div class="w-[360px] max-w-[92vw] bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl p-md">
+            <div class="flex items-start gap-sm">
+                <span id="confirmIcon"
+                    class="material-symbols-outlined text-[28px] text-error flex-shrink-0">help</span>
+                <div class="flex-1 min-w-0">
+                    <h3 id="confirmTitle" class="font-headline-sm text-headline-sm text-on-surface mb-xs"></h3>
+                    <p id="confirmMsg" class="font-body-md text-sm text-on-surface-variant"></p>
+                </div>
+            </div>
+            <div class="flex gap-sm mt-lg">
+                <button id="confirmCancelBtn" type="button"
+                    class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
+                <button id="confirmOkBtn" type="button"
+                    class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">确认</button>
+            </div>
+        </div>
+    </div>
+    <!-- 通用轻提示 Toast -->
+    <div id="toast"
+        class="hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-[140] px-md py-sm bg-inverse-surface text-inverse-on-surface rounded-lg shadow-xl font-body-md text-sm">
+    </div>
+    <!-- 通用通知卡片容器（右侧滑入，可堆叠） -->
+    <div id="notifyStack"
+        class="fixed top-md right-md z-[150] flex flex-col gap-sm w-[320px] max-w-[92vw] pointer-events-none">
+    </div>
     <footer
         class="fixed bottom-0 left-0 w-full h-8 bg-surface-container-lowest border-t border-outline-variant flex items-center px-md justify-between z-50">
         <div class="flex items-center gap-lg">
@@ -517,15 +571,7 @@
             </div>
         </div>
     </footer>
-    <script>
-        const navLinks = document.querySelectorAll('header nav a');
-        navLinks.forEach(link => {
-            link.addEventListener('click', (e) => {
-                navLinks.forEach(l => l.className = "text-on-surface-variant hover:bg-surface-variant transition-colors duration-150 font-label-caps text-label-caps px-2 py-1 rounded");
-                link.className = "text-primary border-b-2 border-primary pb-1 font-label-caps text-label-caps";
-            });
-        });
-    </script>
+    {# 阶段时间线切换逻辑已移入 image_list.js 的 bindStageNav() #}
     <script src="{{ url_for('static', filename='js/image_list.js') }}"></script>
 </body>
 
