@@ -4,6 +4,8 @@
 推理时懒加载模型（首次调用 predict 时自动加载）。
 """
 
+import importlib.metadata
+import importlib.util
 import os
 import subprocess
 import sys
@@ -45,33 +47,27 @@ def check_environment():
 
 
 def _check_current_process(result):
-    """检测当前 Python 进程可导入的包。"""
-    # PyTorch (.pt)
-    try:
-        import torch  # noqa: F401
+    """检测当前 Python 进程可用哪些推理运行时（轻量探测，不加载 DLL）。"""
+    # PyTorch (.pt) — 仅探测模块是否存在，不 import 避免 DLL 冲突
+    if importlib.util.find_spec("torch") and importlib.util.find_spec("ultralytics"):
         result["pt"] = True
         result["details"]["torch"] = _try_version("torch")
-        try:
-            import ultralytics  # noqa: F401
-            result["details"]["ultralytics"] = _try_version("ultralytics")
-        except ImportError:
+        result["details"]["ultralytics"] = _try_version("ultralytics")
+        # ultralytics YOLO 依赖 torchvision::nms 算子
+        if not importlib.util.find_spec("torchvision"):
             result["pt"] = False
-            result["details"]["ultralytics"] = "未安装（pip install ultralytics）"
-    except ImportError:
+            result["details"]["torchvision"] = "未安装（pip install torchvision）"
+        else:
+            result["details"]["torchvision"] = _try_version("torchvision")
+    else:
         result["details"]["torch"] = "未安装（pip install torch）"
         result["details"]["ultralytics"] = "需要 PyTorch"
 
     # ONNX Runtime (.onnx)
-    try:
-        import onnxruntime  # noqa: F401
+    if importlib.util.find_spec("onnxruntime"):
         result["onnx"] = True
         result["details"]["onnxruntime"] = _try_version("onnxruntime")
-        try:
-            providers = onnxruntime.get_available_providers()
-            result["details"]["onnx_providers"] = providers
-        except Exception:
-            pass
-    except ImportError:
+    else:
         result["details"]["onnxruntime"] = "未安装（pip install onnxruntime）"
 
 
@@ -200,10 +196,20 @@ for pkg in ['torch', 'ultralytics', 'onnxruntime']:
 print(json.dumps(result))
 """
     try:
+        # 构建子进程环境：保留父进程 PATH，加上目标 Python 所在目录及 conda DLL 目录
+        env = {**os.environ, "PYTHONPATH": ""}
+        py_dir = os.path.dirname(python_exe)
+        conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")  # conda 约定的 DLL 目录
+        paths = env.get("PATH", "").split(os.pathsep)
+        for d in [py_dir, conda_dll]:
+            if d not in paths:
+                paths.insert(0, d)
+        env["PATH"] = os.pathsep.join(paths)
+
         proc = subprocess.run(
             [python_exe, "-c", probe_code],
             capture_output=True, text=True, timeout=15,
-            env={**os.environ, "PYTHONPATH": ""},  # 隔离，避免污染
+            env=env,
         )
         if proc.returncode != 0:
             return None
@@ -226,11 +232,8 @@ print(json.dumps(result))
 
 def _try_version(pkg):
     try:
-        import importlib
-
-        m = importlib.import_module(pkg)
-        return getattr(m, "__version__", "已安装")
-    except Exception:
+        return importlib.metadata.version(pkg)
+    except (importlib.metadata.PackageNotFoundError, Exception):
         return "已安装（版本未知）"
 
 
@@ -246,7 +249,7 @@ def read_config():
         if os.path.exists(CONFIG_PATH):
             import json
 
-            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+            with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
                 return json.load(f)
     except Exception:
         pass
@@ -263,6 +266,23 @@ def write_config(data: dict):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         raise OSError(f"无法写入配置文件：{e}")
+
+
+# ===================== NMS 工具函数 =====================
+
+def _iou(a, b):
+    """计算两个比例坐标框的 IoU（0~1 归一化坐标）。"""
+    ax1, ay1 = a["x"], a["y"]
+    ax2, ay2 = a["x"] + a["w"], a["y"] + a["h"]
+    bx1, by1 = b["x"], b["y"]
+    bx2, by2 = b["x"] + b["w"], b["y"] + b["h"]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    area_a = a["w"] * a["h"]
+    area_b = b["w"] * b["h"]
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0
 
 
 # ===================== 检测器 =====================
@@ -313,11 +333,21 @@ class Detector:
         self._stop_worker()
 
         worker_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "worker.py")
+        py_dir = os.path.dirname(self._worker_python)
+        conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")
+        worker_env = {**os.environ, "PYTHONPATH": ""}
+        paths = worker_env.get("PATH", "").split(os.pathsep)
+        for d in [py_dir, conda_dll]:
+            if d not in paths:
+                paths.insert(0, d)
+        worker_env["PATH"] = os.pathsep.join(paths)
+
         self._worker_proc = subprocess.Popen(
             [self._worker_python, worker_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=worker_env,
         )
 
         # 等待 worker 输出 WORKER_READY:<port>
@@ -509,6 +539,7 @@ class Detector:
                 score = float(box.conf[0]) if hasattr(box.conf, "__iter__") else float(box.conf)
                 boxes.append({
                     "label": label,
+                    "class_id": cls_id,
                     "score": round(score * 100),
                     "x": x1 / W,
                     "y": y1 / H,
@@ -519,25 +550,31 @@ class Detector:
 
     def _predict_onnx(self, image_path: str, conf: float):
         import numpy as np
-        from PIL import Image
+        from PIL import Image, ImageOps
 
         img = Image.open(image_path).convert("RGB")
         W, H = img.size
 
-        # 标准 YOLO ONNX 预处理：resize → normalize → NCHW
+        # 标准 YOLO ONNX 预处理：letterbox（保持比例 + 灰边填充），而非简单拉伸
         input_size = 640
-        img_resized = img.resize((input_size, input_size))
-        img_np = np.array(img_resized).astype(np.float32) / 255.0
+        scale = min(input_size / W, input_size / H)
+        nw, nh = int(W * scale), int(H * scale)
+        img_resized = img.resize((nw, nh), Image.LANCZOS)
+        padded = Image.new("RGB", (input_size, input_size), (114, 114, 114))
+        pad_x = (input_size - nw) // 2
+        pad_y = (input_size - nh) // 2
+        padded.paste(img_resized, (pad_x, pad_y))
+        img_np = np.array(padded).astype(np.float32) / 255.0
         img_np = img_np.transpose(2, 0, 1)[np.newaxis, ...]  # NCHW
 
         input_name = self.model.get_inputs()[0].name
         outputs = self.model.run(None, {input_name: img_np})
 
         # 解析 ONNX YOLO 输出 [1, 84, 8400] 格式
-        boxes = self._parse_onnx_output(outputs[0], W, H, input_size, conf)
+        boxes = self._parse_onnx_output(outputs[0], W, H, input_size, scale, pad_x, pad_y, conf)
         return boxes
 
-    def _parse_onnx_output(self, output, orig_w, orig_h, input_size, conf):
+    def _parse_onnx_output(self, output, orig_w, orig_h, input_size, scale, pad_x, pad_y, conf):
         import numpy as np
 
         boxes = []
@@ -555,26 +592,38 @@ class Detector:
                 continue
 
             cx, cy, w, h = output[:4, i]
-            # 缩放到原图尺寸
-            scale_x = orig_w / input_size
-            scale_y = orig_h / input_size
-            x = float((cx - w / 2) * scale_x) / orig_w
-            y = float((cy - h / 2) * scale_y) / orig_h
-            bw = float(w * scale_x) / orig_w
-            bh = float(h * scale_y) / orig_h
+            # 去掉 letterbox 灰边，映射回原图
+            cx = (cx * input_size - pad_x) / scale
+            cy = (cy * input_size - pad_y) / scale
+            w = w * input_size / scale
+            h = h * input_size / scale
+            x = max(0, (cx - w / 2) / orig_w)
+            y = max(0, (cy - h / 2) / orig_h)
+            bw = min(w / orig_w, 1 - x)
+            bh = min(h / orig_h, 1 - y)
 
             label = self.labels[cls_id] if cls_id < len(self.labels) else f"class_{cls_id}"
             boxes.append({
                 "label": label,
+                "class_id": cls_id,
                 "score": round(score * 100),
                 "x": max(0, x),
                 "y": max(0, y),
                 "w": min(bw, 1 - x),
                 "h": min(bh, 1 - y),
             })
-        # 简单 NMS：按 score 排序，去重（后续可用正式 NMS 替代）
+        # NMS：按 score 排序，剔除高重叠的框
         boxes.sort(key=lambda b: b["score"], reverse=True)
-        return boxes
+        keep = []
+        for b in boxes:
+            overlap = False
+            for kb in keep:
+                if _iou(b, kb) > 0.5:
+                    overlap = True
+                    break
+            if not overlap:
+                keep.append(b)
+        return keep
 
     @property
     def is_loaded(self):

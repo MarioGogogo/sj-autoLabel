@@ -58,7 +58,7 @@ def _classes_file():
 
 
 def _colors_file():
-    return os.path.join(ACTIVE_PROJECT, "colors.json")
+    return os.path.join(ACTIVE_PROJECT, "分类颜色缓存.json")
 
 
 # ===================== 类别与标注文件读写 =====================
@@ -67,8 +67,13 @@ def _read_classes():
     """读取 classes.txt，返回类名列表（行号 = class_id）。文件不存在返回空列表。"""
     if not ACTIVE_PROJECT or not os.path.exists(_classes_file()):
         return []
-    with open(_classes_file(), "r", encoding="utf-8") as f:
-        return [line.rstrip("\n") for line in f if line.strip()]
+    for enc in ("utf-8-sig", "gbk", "utf-8"):
+        try:
+            with open(_classes_file(), "r", encoding=enc) as f:
+                return [line.rstrip("\n") for line in f if line.strip()]
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return []
 
 
 def _write_classes(names):
@@ -311,12 +316,18 @@ def api_model_load():
         return jsonify({"ok": False, "error": f"模型加载失败：{e}"}), 500
 
     name = os.path.basename(path)
+    real_path = os.path.realpath(path)
     LOADED_MODEL = {
-        "path": os.path.realpath(path),
+        "path": real_path,
         "name": name,
         "format": ext,
         "loaded_at": datetime.datetime.now().isoformat(),
     }
+
+    # 缓存模型路径到配置，下次启动自动预填
+    cfg = read_config()
+    cfg["lastModelPath"] = real_path
+    write_config(cfg)
     return jsonify({
         "ok": True,
         "model": LOADED_MODEL,
@@ -473,26 +484,23 @@ def api_project_open():
     path = os.path.realpath(path)
     ACTIVE_PROJECT = path
 
+    # 缓存项目路径到配置，下次启动自动恢复
+    cfg = read_config()
+    cfg["lastProjectPath"] = path
+    write_config(cfg)
+
     images_exists = os.path.isdir(_images_dir())
     labels_exists = os.path.isdir(_labels_dir())
     is_new = not (images_exists or labels_exists)
 
-    if is_new:
-        # 新项目：创建空结构。
-        os.makedirs(_images_dir(), exist_ok=True)
-        os.makedirs(_labels_dir(), exist_ok=True)
+    # 补建缺失目录/文件（新旧项目都走这个逻辑，不覆写已有文件）。
+    os.makedirs(_images_dir(), exist_ok=True)
+    os.makedirs(_labels_dir(), exist_ok=True)
+    if not os.path.exists(_classes_file()):
         open(_classes_file(), "w", encoding="utf-8").close()
+    if not os.path.exists(_colors_file()):
         with open(_colors_file(), "w", encoding="utf-8") as f:
             json.dump({}, f)
-    else:
-        # 老项目：不覆盖任何文件，补建缺失的目录/文件。
-        os.makedirs(_images_dir(), exist_ok=True)
-        os.makedirs(_labels_dir(), exist_ok=True)
-        if not os.path.exists(_classes_file()):
-            open(_classes_file(), "w", encoding="utf-8").close()
-        if not os.path.exists(_colors_file()):
-            with open(_colors_file(), "w", encoding="utf-8") as f:
-                json.dump({}, f)
 
     names = _read_classes()
     colors = _read_colors()
@@ -512,10 +520,13 @@ def api_project_open():
 
 @app.route("/api/project/status")
 def api_project_status():
-    """页面刷新恢复：是否已打开项目。"""
+    """页面刷新恢复：是否已打开项目 + 缓存的项目路径和模型路径。"""
+    cfg = read_config()
+    last_project = cfg.get("lastProjectPath", "")
+    last_model = cfg.get("lastModelPath", "")
     if not ACTIVE_PROJECT:
-        return jsonify({"ok": True, "opened": False})
-    return jsonify({"ok": True, "opened": True, "projectPath": ACTIVE_PROJECT})
+        return jsonify({"ok": True, "opened": False, "lastProjectPath": last_project, "lastModelPath": last_model})
+    return jsonify({"ok": True, "opened": True, "projectPath": ACTIVE_PROJECT, "lastProjectPath": last_project, "lastModelPath": last_model})
 
 
 @app.route("/api/project/refresh")
@@ -698,7 +709,6 @@ def api_save_labels(image_name):
     data = request.get_json(silent=True) or {}
     boxes = data.get("boxes") or []
     names = _read_classes()
-    changed = False
 
     if not boxes:
         try:
@@ -710,11 +720,17 @@ def api_save_labels(image_name):
 
     lines = []
     for b in boxes:
-        label = b.get("label", "")
-        if label not in names:
-            names.append(label)
-            changed = True
-        cid = names.index(label)
+        # 确定 class_id 的规则（从不追加新类别到 classes.txt）：
+        #   1. class_id 合法且在范围内 → 直接用
+        #   2. class_id 不合法但 label 匹配已有类别 → 用该类别索引
+        #   3. 都不行 → 默认 index 0
+        cid = b.get("class_id")
+        if cid is None or not isinstance(cid, int) or cid < 0 or cid >= len(names):
+            label = b.get("label", "")
+            if label in names:
+                cid = names.index(label)
+            else:
+                cid = 0
         x = _clamp01(float(b.get("x", 0)))
         y = _clamp01(float(b.get("y", 0)))
         w = _clamp01(float(b.get("w", 0)))
@@ -722,9 +738,6 @@ def api_save_labels(image_name):
         cx = _clamp01(x + w / 2)
         cy = _clamp01(y + h / 2)
         lines.append(f"{cid} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}")
-
-    if changed:
-        _write_classes(names)
 
     with open(txt_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
@@ -759,6 +772,7 @@ def api_load_labels(image_name):
                 label = names[cid]
                 boxes.append({
                     "label": label,
+                    "class_id": cid,
                     "score": 100,
                     "x": _clamp01(cx - w / 2),
                     "y": _clamp01(cy - h / 2),
@@ -821,6 +835,11 @@ def _run_desktop():
         print("Flask 启动超时，请检查端口或重试。")
         sys.exit(1)
 
+    # 固定 WebView2 用户数据目录，避免临时目录权限问题
+    wv_data = os.path.join(os.path.expanduser("~"), ".autolabels", "webview2-data")
+    os.makedirs(wv_data, exist_ok=True)
+    os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
+
     webview.create_window(
         title="视界标注专业版",
         url=url,
@@ -835,11 +854,12 @@ def _run_desktop():
         webview.start()
     except Exception as e:
         msg = str(e)
-        if "WebView2" in msg or "edgechromium" in msg.lower():
+        if any(x in msg for x in ("WebView2", "edgechromium", "0x8000FFFF", "E_UNEXPECTED")):
             print(
-                "⚠️  未检测到 Microsoft Edge WebView2 运行时。\n"
-                "请从以下地址下载安装后重新启动：\n"
-                "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+                "⚠️  WebView2 运行时不可用。\n"
+                "   python app.py --browser 可临时用浏览器打开。\n"
+                "   或从以下地址安装 WebView2 运行时后重试：\n"
+                "   https://go.microsoft.com/fwlink/p/?LinkId=2124703"
             )
         else:
             print(f"桌面模式启动失败：{msg}")

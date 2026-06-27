@@ -215,12 +215,13 @@ body {
     cursor: grabbing;
 }
 
-/* 检测框：基于舞台（图像区域）百分比定位，可点击 / 拖动。 */
+/* 检测框：基于舞台（图像区域）百分比定位，可点击 / 拖动。
+   border-width 用 var(--bw) 配合逆缩放 var(--bs) 保持视觉粗细恒定。 */
 .canvas-stage .bbox {
     position: absolute;
-    border-width: 2px;
+    border-width: calc(var(--bw, 2) * 1px * var(--bs, 1));
     border-style: solid;
-    border-radius: 2px;
+    border-radius: calc(2px * var(--bs, 1));
     box-sizing: border-box;
     /* 框体本身中空穿透：鼠标可落到内部的小目标/画布上，不再被大框挡住。 */
     pointer-events: none;
@@ -235,10 +236,13 @@ body {
     cursor: move;
     /* 绘制模式下不抢占：交由 .drawing-mode 覆盖。 */
 }
-.canvas-stage .bbox-edge.top    { top: -6px;    left: -6px;    right: -6px;    height: 12px; }
-.canvas-stage .bbox-edge.bottom { bottom: -6px; left: -6px;    right: -6px;    height: 12px; }
-.canvas-stage .bbox-edge.left   { top: -6px;    left: -6px;    bottom: -6px;   width: 12px; }
-.canvas-stage .bbox-edge.right  { top: -6px;    right: -6px;   bottom: -6px;   width: 12px; }
+.canvas-stage .bbox-edge {
+    --e: calc(6px * var(--bs, 1));
+}
+.canvas-stage .bbox-edge.top    { top: calc(-1 * var(--e)); left: calc(-1 * var(--e)); right: calc(-1 * var(--e)); height: calc(2 * var(--e)); }
+.canvas-stage .bbox-edge.bottom { bottom: calc(-1 * var(--e)); left: calc(-1 * var(--e)); right: calc(-1 * var(--e)); height: calc(2 * var(--e)); }
+.canvas-stage .bbox-edge.left   { top: calc(-1 * var(--e)); left: calc(-1 * var(--e)); bottom: calc(-1 * var(--e)); width: calc(2 * var(--e)); }
+.canvas-stage .bbox-edge.right  { top: calc(-1 * var(--e)); right: calc(-1 * var(--e)); bottom: calc(-1 * var(--e)); width: calc(2 * var(--e)); }
 
 /* 绘制模式：所有框的边缘命中条让出事件，整个画布统一显示十字光标画框。 */
 .canvas-stage.drawing-mode .bbox-edge { pointer-events: none; }
@@ -249,7 +253,7 @@ body {
 
 /* 选中态：实心高亮 + 外发光，把手由 JS 注入的 .handle 元素显示。 */
 .canvas-stage .bbox.selected {
-    box-shadow: 0 0 0 2px rgba(0, 61, 155, 0.45);
+    box-shadow: 0 0 0 calc(2px * var(--bs, 1)) rgba(0, 61, 155, 0.45);
     background-color: rgba(0, 61, 155, 0.12);
     z-index: 5;
 }
@@ -257,38 +261,43 @@ body {
 .canvas-stage .bbox-label {
     position: absolute;
     left: -1px;
-    top: -18px;
-    padding: 0 4px;
-    height: 16px;
-    line-height: 16px;
-    font-size: 10px;
+    top: calc(-18px * var(--bs, 1));
+    padding: 0 calc(4px * var(--bs, 1));
+    height: calc(16px * var(--bs, 1));
+    line-height: calc(16px * var(--bs, 1));
+    font-size: calc(10px * var(--bs, 1));
     font-weight: 700;
-    border-radius: 2px 2px 0 0;
+    border-radius: calc(2px * var(--bs, 1)) calc(2px * var(--bs, 1)) 0 0;
     white-space: nowrap;
     pointer-events: none;
 }
 
-/* 选中框的 8 个尺寸调整把手（覆盖伪元素的角点，改用真实元素以便逐个绑定方向）。 */
+/* 选中框的 8 个尺寸调整把手（覆盖伪元素的角点，改用真实元素以便逐个绑定方向）。
+   视觉尺寸通过 --bs（逆缩放）保持恒定，避免放大后把手/边缘条遮住物体。 */
 .canvas-stage .bbox .handle {
+    /* 圆心要落在 .bbox 边框的中心线上。absolute 定位原点是 padding-box（边框内侧），
+       故偏移 = (直径 + 边框宽) / 2，使圆心精确对齐边框中线，不外偏、不内偏。 */
+    --h: calc((7px + var(--bw, 2) * 1px) * var(--bs, 1) / 2);
+    --s: calc(7px * var(--bs, 1));
     position: absolute;
-    width: 10px;
-    height: 10px;
-    background: #fff;
-    border: 2px solid #003d9b;
+    width: var(--s);
+    height: var(--s);
+    background: #003d9b;
+    border: calc(1.5px * var(--bs, 1)) solid #fff;
     border-radius: 50%;
     pointer-events: auto;
     z-index: 6;
     box-sizing: border-box;
 }
 
-.canvas-stage .bbox .handle.nw { left: -5px; top: -5px; cursor: nwse-resize; }
-.canvas-stage .bbox .handle.ne { right: -5px; top: -5px; cursor: nesw-resize; }
-.canvas-stage .bbox .handle.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
-.canvas-stage .bbox .handle.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
-.canvas-stage .bbox .handle.n { left: 50%; top: -5px; transform: translateX(-50%); cursor: ns-resize; }
-.canvas-stage .bbox .handle.s { left: 50%; bottom: -5px; transform: translateX(-50%); cursor: ns-resize; }
-.canvas-stage .bbox .handle.w { left: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
-.canvas-stage .bbox .handle.e { right: -5px; top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+.canvas-stage .bbox .handle.nw { left: calc(-1 * var(--h)); top: calc(-1 * var(--h)); cursor: nwse-resize; }
+.canvas-stage .bbox .handle.ne { right: calc(-1 * var(--h)); top: calc(-1 * var(--h)); cursor: nesw-resize; }
+.canvas-stage .bbox .handle.sw { left: calc(-1 * var(--h)); bottom: calc(-1 * var(--h)); cursor: nesw-resize; }
+.canvas-stage .bbox .handle.se { right: calc(-1 * var(--h)); bottom: calc(-1 * var(--h)); cursor: nwse-resize; }
+.canvas-stage .bbox .handle.n { left: 50%; top: calc(-1 * var(--h)); transform: translateX(-50%); cursor: ns-resize; }
+.canvas-stage .bbox .handle.s { left: 50%; bottom: calc(-1 * var(--h)); transform: translateX(-50%); cursor: ns-resize; }
+.canvas-stage .bbox .handle.w { left: calc(-1 * var(--h)); top: 50%; transform: translateY(-50%); cursor: ew-resize; }
+.canvas-stage .bbox .handle.e { right: calc(-1 * var(--h)); top: 50%; transform: translateY(-50%); cursor: ew-resize; }
 
 /* 画框预览（绘制过程中的临时框）。 */
 .canvas-stage .bbox.drawing {

@@ -114,6 +114,9 @@
     function applyTransform() {
         if (!canvasStage) return;
         canvasStage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
+        // 边缘条和把手逆缩放：保持视觉尺寸恒定（上限 3x，避免缩太小时过大）。
+        const inv = Math.min(3, 1 / view.scale);
+        canvasBoxes.style.setProperty('--bs', inv);
         if (canvasZoom) {
             canvasZoom.textContent = `${Math.round(view.scale * 100)}%`;
             // 非 100% 时显示缩放指示。
@@ -330,7 +333,7 @@
             box.style.cssText =
                 `left:${(b.x * 100).toFixed(2)}%;top:${(b.y * 100).toFixed(2)}%;` +
                 `width:${(b.w * 100).toFixed(2)}%;height:${(b.h * 100).toFixed(2)}%;` +
-                `border-width:${lineWidth}px;border-color:${hex};`;
+                `--bw:${lineWidth};border-color:${hex};`;
             const lbl = document.createElement("div");
             lbl.className = "bbox-label text-white";
             lbl.style.backgroundColor = hex;
@@ -1124,9 +1127,9 @@
         const name = pendingSaveName;
         if (!name) return;
         pendingSaveName = null;
-        // 快照当前框（label + 左上角坐标），避免保存中途被下一张改动。
+        // 快照当前框（label + class_id + 左上角坐标），避免保存中途被下一张改动。
         const boxes = currentBoxes.map((b) => ({
-            label: b.label, x: b.x, y: b.y, w: b.w, h: b.h,
+            label: b.label, class_id: b.class_id, x: b.x, y: b.y, w: b.w, h: b.h,
         }));
         try {
             const resp = await fetch(`/api/labels/${encodeURIComponent(name)}`, {
@@ -1229,21 +1232,28 @@
         selectImage(record);
     }
 
-    /** 刷新顶部计数与空状态显示。 */
+    /** 刷新顶部计数（已处理 / 总图片数）与空状态显示。 */
     function refreshMeta(total) {
-        if (imageCount) imageCount.textContent = total.toLocaleString();
+        if (imageCount) {
+            const items = imageList.querySelectorAll(".img-item");
+            const done = Array.from(items).filter((n) => n.dataset.status === "done").length;
+            imageCount.textContent = `已处理 ${total ? done : 0} / ${total || 0}`;
+        }
         if (emptyHint) emptyHint.classList.toggle("hidden", total > 0);
     }
 
-    /** 更新画布上方进度条（已处理 / 总计）。 */
+    /** 更新画布上方进度条（已处理 / 未处理 / 总计）。已与 refreshMeta 同步。 */
     function updateProgress() {
         if (!canvasProgress) return;
         const items = imageList.querySelectorAll(".img-item");
         const total = items.length;
         const done = Array.from(items).filter((n) => n.dataset.status === "done").length;
+        const pending = total - done;
         canvasProgress.textContent = total
-            ? `已处理 ${done} / ${total} 张`
+            ? `已处理 ${done} / ${total} 张 · 未处理 ${pending} 张`
             : "-";
+        // 同步左侧计数
+        if (imageCount) imageCount.textContent = `已处理 ${total ? done : 0} / ${total || 0}`;
     }
 
     /** 渲染项目图片列表（替换当前列表全部内容）。 */
@@ -1639,6 +1649,7 @@
             currentBoxes = (data.boxes || []).map((b, i) => ({
                 id: `${selectedName}_det_${i}`,
                 label: b.label,
+                class_id: b.class_id,
                 score: b.score || 100,
                 x: b.x, y: b.y, w: b.w, h: b.h,
                 hex: b.hex || hexOfLabel(b.label) || "#003d9b",
@@ -1821,20 +1832,24 @@
                     modelHint.classList.remove("hidden");
                 }
 
-                // 推理环境配置面板：当前无 runtime 且未配置 worker 时显示
-                if (!hasRuntime && !hasConfig && envConfigPanel && envConfigContent) {
+                // 推理环境配置面板：始终显示
+                if (envConfigPanel && envConfigContent) {
                     envConfigPanel.classList.remove("hidden");
                     renderEnvConfigPanel(envData);
-                } else if (envConfigPanel) {
-                    envConfigPanel.classList.add("hidden");
                 }
             }
         } catch (e) { /* 静默 */ }
 
-        // 检查是否已有打开的项目（页面刷新恢复）。
+        // 检查是否已有打开的项目（页面刷新恢复），并自动恢复缓存的项目和模型路径。
         try {
             const resp = await fetch("/api/project/status");
             const data = await resp.json();
+
+            // 预填缓存的模型路径
+            if (data.lastModelPath && modelPathInput) {
+                modelPathInput.value = data.lastModelPath;
+            }
+
             if (data.opened) {
                 currentProject = { path: data.projectPath };
                 if (projectPathEl) projectPathEl.textContent = data.projectPath;
@@ -1842,6 +1857,9 @@
                 await loadCategories();
                 await loadProjectImages();
                 if (projectTitle) projectTitle.textContent = "项目已恢复";
+            } else if (data.lastProjectPath) {
+                // 有缓存的项目路径但未打开，自动恢复
+                await openProject(data.lastProjectPath);
             } else {
                 await loadCategories(); // 无项目时也加载类别（可能为空）
                 refreshMeta(0);
@@ -1941,7 +1959,6 @@
                 modelHint.textContent = `🔗 已连接外部推理环境（Worker 模式）`;
                 modelHint.classList.remove("hidden");
             }
-            if (envConfigPanel) envConfigPanel.classList.add("hidden");
 
             showNotification({
                 type: "success",

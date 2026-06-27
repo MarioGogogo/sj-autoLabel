@@ -92,7 +92,7 @@ class ModelHolder:
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
                 score = float(box.conf[0]) if hasattr(box.conf, "__iter__") else float(box.conf)
                 boxes.append({
-                    "label": label, "score": round(score * 100),
+                    "label": label, "class_id": cls_id, "score": round(score * 100),
                     "x": x1 / W, "y": y1 / H,
                     "w": (x2 - x1) / W, "h": (y2 - y1) / H,
                 })
@@ -105,15 +105,21 @@ class ModelHolder:
         img = Image.open(image_path).convert("RGB")
         W, H = img.size
         input_size = 640
-        img_resized = img.resize((input_size, input_size))
-        img_np = np.array(img_resized).astype(np.float32) / 255.0
+        scale = min(input_size / W, input_size / H)
+        nw, nh = int(W * scale), int(H * scale)
+        img_resized = img.resize((nw, nh), Image.LANCZOS)
+        padded = Image.new("RGB", (input_size, input_size), (114, 114, 114))
+        pad_x = (input_size - nw) // 2
+        pad_y = (input_size - nh) // 2
+        padded.paste(img_resized, (pad_x, pad_y))
+        img_np = np.array(padded).astype(np.float32) / 255.0
         img_np = img_np.transpose(2, 0, 1)[np.newaxis, ...]
         input_name = self.model.get_inputs()[0].name
         outputs = self.model.run(None, {input_name: img_np})
-        boxes = self._parse_onnx_output(outputs[0], W, H, input_size, conf)
+        boxes = self._parse_onnx_output(outputs[0], W, H, input_size, scale, pad_x, pad_y, conf)
         return boxes
 
-    def _parse_onnx_output(self, output, orig_w, orig_h, input_size, conf):
+    def _parse_onnx_output(self, output, orig_w, orig_h, input_size, scale, pad_x, pad_y, conf):
         import numpy as np
         boxes = []
         output = np.squeeze(output[0]) if isinstance(output, list) else np.squeeze(output)
@@ -127,20 +133,48 @@ class ModelHolder:
             if score < conf:
                 continue
             cx, cy, w, h = output[:4, i]
-            scale_x = orig_w / input_size
-            scale_y = orig_h / input_size
-            x = float((cx - w / 2) * scale_x) / orig_w
-            y = float((cy - h / 2) * scale_y) / orig_h
-            bw = float(w * scale_x) / orig_w
-            bh = float(h * scale_y) / orig_h
+            # 去掉 letterbox 灰边，映射回原图
+            cx = (cx * input_size - pad_x) / scale
+            cy = (cy * input_size - pad_y) / scale
+            w = w * input_size / scale
+            h = h * input_size / scale
+            x = max(0, (cx - w / 2) / orig_w)
+            y = max(0, (cy - h / 2) / orig_h)
+            bw = min(w / orig_w, 1 - x)
+            bh = min(h / orig_h, 1 - y)
             label = self.labels[cls_id] if cls_id < len(self.labels) else f"class_{cls_id}"
             boxes.append({
-                "label": label, "score": round(score * 100),
+                "label": label, "class_id": cls_id, "score": round(score * 100),
                 "x": max(0, x), "y": max(0, y),
                 "w": min(bw, 1 - x), "h": min(bh, 1 - y),
             })
+        # NMS：按 score 排序，剔除高重叠框
         boxes.sort(key=lambda b: b["score"], reverse=True)
-        return boxes
+        keep = []
+        for b in boxes:
+            overlap = False
+            for kb in keep:
+                if _iou(b, kb) > 0.5:
+                    overlap = True
+                    break
+            if not overlap:
+                keep.append(b)
+        return keep
+
+
+def _iou(a, b):
+    """计算两个比例坐标框的 IoU（0~1 归一化坐标）。"""
+    ax1, ay1 = a["x"], a["y"]
+    ax2, ay2 = a["x"] + a["w"], a["y"] + a["h"]
+    bx1, by1 = b["x"], b["y"]
+    bx2, by2 = b["x"] + b["w"], b["y"] + b["h"]
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+    area_a = a["w"] * a["h"]
+    area_b = b["w"] * b["h"]
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0
 
 
 holder = ModelHolder()
