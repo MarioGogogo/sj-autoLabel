@@ -202,7 +202,7 @@ for pkg in ['torch', 'ultralytics', 'onnxruntime', 'sam2']:
         result[pkg] = getattr(m, '__version__', 'installed')
     except ImportError:
         result[pkg] = None
-print(json.dumps(result))
+print("PROBE_JSON:" + json.dumps(result))
 """
     try:
         # 构建子进程环境：保留父进程 PATH，加上目标 Python 所在目录及 conda DLL 目录
@@ -222,7 +222,13 @@ print(json.dumps(result))
         )
         if proc.returncode != 0:
             return None
-        result = __import__("json").loads(proc.stdout.strip())
+        # 用标记定位 JSON：ultralytics 等包 import 时可能往 stdout 打印 WARNING，
+        # 会污染裸 JSON 解析导致探测误判为失败。
+        stdout = proc.stdout
+        marker = "PROBE_JSON:"
+        idx = stdout.find(marker)
+        raw = stdout[idx + len(marker):].strip() if idx >= 0 else stdout.strip()
+        result = __import__("json").loads(raw)
     except (subprocess.TimeoutExpired, Exception):
         return None
 

@@ -929,6 +929,11 @@
         }
     }
 
+    // 暴露通用弹窗 API 到 window，供独立模块（如 train.js）复用，避免重复造轮子或回退原生 confirm/alert。
+    window.showConfirm = showConfirm;
+    window.showToast = showToast;
+    window.showNotification = showNotification;
+
     // ===================== 自定义右键菜单（按区域分发） =====================
     // 设计：每个可右键区域用 data-ctx-target="<scope>" 标记；对应的菜单 DOM 用
     //       data-ctx="<scope>" 标识。右键时按「最近的 data-ctx-target 祖先」
@@ -1994,6 +1999,8 @@
                 const el = document.getElementById("stage-" + key);
                 if (el) el.classList.toggle("hidden", key !== stageKey);
             });
+            // 通知目标阶段（训练页据此初始化/适配 xterm 尺寸）。
+            window.dispatchEvent(new CustomEvent("stage-change", { detail: { stage: stageKey } }));
             // 离开标注阶段时退出绘制 / 分割模式，避免状态遗留到切回时。
             if (stageKey !== "annotate") {
                 if (drawMode) setDrawMode(false);

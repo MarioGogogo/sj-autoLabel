@@ -12,6 +12,7 @@
 import json
 import os
 import platform
+import queue
 
 # PyTorch/MKL 在 Windows + conda 环境常出现 OpenMP 运行时冲突（libiomp5md.dll 重复初始化），
 # 导致 import torch 时 OMP Error #15 直接 abort 进程。设此变量放行（须在任何 torch import 之前；
@@ -22,13 +23,17 @@ import string
 
 from flask import (
     Flask,
+    Response,
     jsonify,
     render_template,
     request,
     send_from_directory,
+    stream_with_context,
 )
 
+import threading
 from detector import check_environment, detector, read_config, write_config
+from train_manager import train_manager
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-autolabels"
@@ -50,6 +55,7 @@ if _restored_python and os.path.isfile(_restored_python):
 # app 退出时关闭 Worker 子进程，避免残留进程占用端口与显存
 import atexit
 atexit.register(detector._stop_worker)
+atexit.register(train_manager.shutdown)
 
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 THUMB_MAX_SIZE = 160  # 缩略图最长边（备用，当前不生成）
@@ -889,6 +895,192 @@ def api_load_labels(image_name):
     return jsonify({"ok": True, "boxes": boxes})
 
 
+# ===================== 模型训练 =====================
+
+# 训练环境扫描缓存 + 锁（懒加载：首次进训练页时同步扫描，后续缓存秒开）
+_TRAIN_ENV_CACHE = None
+_TRAIN_ENV_LOCK = threading.Lock()
+
+
+@app.route("/api/train/env")
+def api_train_env():
+    """返回可用于训练的环境列表（含 ultralytics 的 conda/venv）+ 当前选中（默认 yolo）。
+
+    训练环境独立于推理环境：推理可能用 base/进程内，训练必须用专门的虚拟环境（如 yolo）。
+    无条件扫描外部环境（_scan_external_envs），不依赖 check_environment 的 external——
+    后者仅在「当前进程无推理运行时」才扫描，当前进程装了 torch 时会漏掉外部环境。
+    """
+    global _TRAIN_ENV_CACHE, _TRAIN_ENV_LOCK
+    from detector import _scan_external_envs
+
+    if _TRAIN_ENV_CACHE is None:
+        with _TRAIN_ENV_LOCK:
+            if _TRAIN_ENV_CACHE is None:
+                _TRAIN_ENV_CACHE = _scan_external_envs()
+    # 只保留虚拟环境（conda 创建的虚拟环境），过滤 base/anaconda3 等系统环境
+    envs = [
+        {
+            "name": e.get("name", ""),
+            "python": e.get("python", ""),
+            "ultralytics": e.get("ultralytics"),
+            "torch": e.get("torch"),
+        }
+        for e in _TRAIN_ENV_CACHE
+        if e.get("ultralytics")
+        and e.get("name")
+        and e["name"] not in ("anaconda3", "base", "root")  # 排除 base 环境
+    ]
+    cfg = read_config()
+    selected = cfg.get("trainPythonPath", "")
+    if not selected:
+        for e in envs:
+            if e.get("name") == "yolo":
+                selected = e["python"]
+                break
+    return jsonify({"ok": True, "envs": envs, "selected": selected})
+
+
+@app.route("/api/train/start", methods=["POST"])
+def api_train_start():
+    """启动训练：校验项目/环境 → 生成 data.yaml → 合并参数 → spawn 训练子进程。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先在顶部打开一个项目"}), 400
+
+    data = request.get_json(silent=True) or {}
+
+    # 训练环境（独立于推理环境；默认 yolo 虚拟环境，由前端下拉选择）
+    python_path = (data.get("trainPythonPath") or "").strip()
+    if not python_path:
+        python_path = (read_config().get("trainPythonPath") or "").strip()
+    if not python_path or not os.path.isfile(python_path):
+        return jsonify({
+            "ok": False,
+            "error": "未选择训练环境。请在右侧「训练环境」下拉中选择一个含 ultralytics 的环境（如 yolo）",
+        }), 400
+
+    from detector import _probe_python
+
+    info = _probe_python(python_path)
+    if not info or not info.get("ultralytics"):
+        return jsonify({
+            "ok": False,
+            "error": f"该训练环境缺少 ultralytics。\n路径：{python_path}\n\n请在该环境执行：pip install ultralytics",
+        }), 400
+
+    # 持久化训练环境选择，下次默认用它
+    cfg = read_config()
+    cfg["trainPythonPath"] = python_path
+    write_config(cfg)
+
+    # 实验名校验（防路径穿越/特殊字符）
+    name = str(data.get("name") or "exp").strip() or "exp"
+    if not re.match(r"^[A-Za-z0-9_\-.]+$", name):
+        return jsonify({"ok": False, "error": "实验名只能包含字母、数字、下划线、连字符、点"}), 400
+
+    # 基础数值参数
+    try:
+        epochs = int(data.get("epochs", 50))
+        imgsz = int(data.get("imgsz", 640))
+        workers = int(data.get("workers", 8))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "epochs / imgsz / workers 必须是整数"}), 400
+
+    batch_raw = str(data.get("batch", 16)).strip()
+    if batch_raw.lower() == "auto":
+        batch = "auto"
+    else:
+        try:
+            batch = int(batch_raw)
+        except ValueError:
+            batch = 16
+
+    device = str(data.get("device") or "cpu").strip()
+    model = str(data.get("model") or "yolo11n.pt").strip()
+    export_onnx = bool(data.get("exportOnnx", False))
+
+    try:
+        val_ratio = float(data.get("valRatio", 0.2))
+        val_ratio = max(0.05, min(0.5, val_ratio))
+    except (TypeError, ValueError):
+        val_ratio = 0.2
+
+    params = {
+        "model": model,
+        "epochs": epochs,
+        "imgsz": imgsz,
+        "batch": batch,
+        "device": device,
+        "workers": workers,
+        "name": name,
+        "valRatio": val_ratio,
+        "exportOnnx": export_onnx,
+        "customParamsText": str(data.get("customParamsText") or ""),
+        "customParamsYaml": str(data.get("customParamsYaml") or ""),
+    }
+
+    try:
+        result = train_manager.start(ACTIVE_PROJECT, params, python_path)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True, "dataYaml": result["dataYaml"]})
+
+
+@app.route("/api/train/status")
+def api_train_status():
+    """查询训练状态机：idle / running / done / error / cancelled。"""
+    return jsonify({"ok": True, **train_manager.status()})
+
+
+@app.route("/api/train/stop", methods=["POST"])
+def api_train_stop():
+    """停止正在运行的训练（terminate → kill）。"""
+    result = train_manager.stop()
+    if not result.get("ok"):
+        return jsonify(result), 400
+    return jsonify(result)
+
+
+@app.route("/api/train/logs")
+def api_train_logs():
+    """SSE：实时推送训练日志到前端 xterm。每连接独立队列，请求线程不阻塞读子进程。"""
+    q = train_manager.subscribe()  # 已注入历史日志回放
+
+    def gen():
+        try:
+            while True:
+                try:
+                    text = q.get(timeout=15)
+                except queue.Empty:
+                    yield ": heartbeat\n\n"  # 心跳，防代理/WebView 连接超时
+                    continue
+                yield f"data: {json.dumps(text, ensure_ascii=False)}\n\n"
+        finally:
+            train_manager.unsubscribe(q)
+
+    return Response(
+        stream_with_context(gen),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.route("/api/train/export", methods=["POST"])
+def api_train_export():
+    """把训练产物（best.pt 及可选 onnx）复制到项目内 models/，供「智能标注」阶段加载。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    data = request.get_json(silent=True) or {}
+    name = str(data.get("name") or "").strip()
+    if not name:
+        return jsonify({"ok": False, "error": "请指定实验名"}), 400
+    try:
+        result = train_manager.export_artifacts(ACTIVE_PROJECT, name)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 404
+    return jsonify({"ok": True, **result})
+
+
 # ===================== 桌面模式（pywebview） =====================
 
 def _pick_free_port(start=5055, tries=20):
@@ -914,14 +1106,14 @@ def _run_desktop():
     except ImportError:
         print("pywebview 未安装。请运行: pip install pywebview")
         print("回退到浏览器模式…")
-        app.run(debug=True)
+        app.run(debug=True, threaded=True)
         return
 
     port = _pick_free_port()
     url = f"http://127.0.0.1:{port}"
 
     def flask_thread():
-        app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+        app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False, threaded=True)
 
     t = threading.Thread(target=flask_thread, daemon=True)
     t.start()
@@ -976,8 +1168,8 @@ if __name__ == "__main__":
     if "--desktop" in sys.argv or len(sys.argv) == 1:
         # 默认桌面模式；传 --browser 回退到浏览器模式
         if "--browser" in sys.argv:
-            app.run(debug=True)
+            app.run(debug=True, threaded=True)
         else:
             _run_desktop()
     else:
-        app.run(debug=True)
+        app.run(debug=True, threaded=True)

@@ -73,6 +73,7 @@ module.exports = {
         "gutter": "16px",
         "toolbar-width": "64px",
         "sidebar-width": "280px",
+        "train-sidebar": "340px",
       },
       fontFamily: {
         "headline-md": ["Inter", "system-ui", "sans-serif"],

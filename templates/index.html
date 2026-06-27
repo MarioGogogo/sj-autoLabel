@@ -444,24 +444,132 @@
         </aside>
         </div><!-- /stage-annotate -->
 
-        <!-- ===== 阶段 2：数据集训练（占位，即将上线） ===== -->
-        <div id="stage-train" class="stage-view hidden stage-placeholder">
-            <div class="stage-ph-card">
-                <div class="stage-ph-icon"><span class="material-symbols-outlined">model_training</span></div>
-                <h2 class="stage-ph-title">数据集训练</h2>
-                <p class="stage-ph-sub">用「智能标注」产出的标注，训练你的专属检测模型</p>
-                <ul class="stage-ph-list">
-                    <li><span class="material-symbols-outlined">check_circle</span>基于 YOLO 等架构微调训练</li>
-                    <li><span class="material-symbols-outlined">check_circle</span>一键导出训练集并启动训练</li>
-                    <li><span class="material-symbols-outlined">check_circle</span>实时 loss / mAP / 训练曲线监控</li>
-                </ul>
-                <span class="stage-ph-badge"><span class="material-symbols-outlined">schedule</span>该阶段即将上线</span>
-                <div>
-                    <button class="stage-ph-back" type="button" data-back-stage="annotate">
-                        <span class="material-symbols-outlined">arrow_back</span>返回智能标注
-                    </button>
+        <!-- ===== 阶段 2：数据集训练（左终端 / 右参数） ===== -->
+        <div id="stage-train" class="stage-view hidden flex-1 min-w-0">
+            <!-- 左：xterm 终端 -->
+            <div class="flex-1 min-w-0 flex flex-col bg-[#0b0b0b]">
+                <div class="flex items-center justify-between px-md py-sm bg-neutral-900 border-b border-neutral-800">
+                    <span class="font-label-caps text-label-caps text-neutral-400 flex items-center gap-xs uppercase tracking-wider">
+                        <span class="material-symbols-outlined text-[14px]">terminal</span> 训练终端
+                    </span>
+                    <span id="trainStatusBadge" class="font-label-mono text-[10px] px-sm py-1 rounded-full bg-neutral-800 text-neutral-400">空闲</span>
                 </div>
+                <div id="trainTerminal" class="flex-1 min-h-0 p-sm overflow-hidden"></div>
             </div>
+            <!-- 右：参数面板 -->
+            <aside class="w-train-sidebar bg-surface-container-low border-l border-outline-variant flex flex-col overflow-y-auto custom-scrollbar">
+                <!-- 训练环境（独立于推理环境，默认 yolo 虚拟环境） -->
+                <div class="p-md border-b border-outline-variant">
+                    <h3 class="font-label-caps text-label-caps text-outline mb-md flex items-center gap-xs uppercase tracking-wider">
+                        <span class="material-symbols-outlined text-[14px]">dns</span> 训练环境
+                    </h3>
+                    <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">Python 虚拟环境（须含 ultralytics）</label>
+                    <select id="trEnvSelect"
+                        class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none">
+                        <option value="">加载中…</option>
+                    </select>
+                    <p id="trEnvHint" class="font-label-mono text-[10px] text-outline mt-xs">默认 yolo 环境；可切 yolo26 等</p>
+                </div>
+                <!-- 训练参数 -->
+                <div class="p-md border-b border-outline-variant">
+                    <h3 class="font-label-caps text-label-caps text-outline mb-md flex items-center gap-xs uppercase tracking-wider">
+                        <span class="material-symbols-outlined text-[14px]">tune</span> 训练参数
+                    </h3>
+                    <div class="space-y-md">
+                        <div>
+                            <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">基础模型</label>
+                            <select id="trModel"
+                                class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none">
+                                <option value="yolo11n.pt" selected>yolo11n.pt（最快）</option>
+                                <option value="yolo11s.pt">yolo11s.pt</option>
+                                <option value="yolo11m.pt">yolo11m.pt</option>
+                                <option value="yolov8n.pt">yolov8n.pt</option>
+                                <option value="__custom__">自定义 .pt 路径…</option>
+                            </select>
+                            <input id="trCustomModel"
+                                class="mt-1 w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none hidden"
+                                type="text" placeholder="如 E:\...\mybase.pt 或 yolo11x.pt" />
+                        </div>
+                        <div class="grid grid-cols-2 gap-sm">
+                            <div>
+                                <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">epochs</label>
+                                <input id="trEpochs"
+                                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none"
+                                    type="number" value="50" min="1" />
+                            </div>
+                            <div>
+                                <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">imgsz</label>
+                                <input id="trImgsz"
+                                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none"
+                                    type="number" value="640" min="32" />
+                            </div>
+                            <div>
+                                <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">batch</label>
+                                <input id="trBatch"
+                                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none"
+                                    type="text" value="16" placeholder="16 或 auto" />
+                            </div>
+                            <div>
+                                <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">workers</label>
+                                <input id="trWorkers"
+                                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none"
+                                    type="number" value="8" min="0" />
+                            </div>
+                            <div>
+                                <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">device</label>
+                                <select id="trDevice"
+                                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none">
+                                    <option value="0" selected>0（GPU）</option>
+                                    <option value="cpu">cpu</option>
+                                    <option value="0,1">0,1（多卡）</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">验证集比例</label>
+                                <input id="trValRatio"
+                                    class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none"
+                                    type="number" value="0.2" min="0.05" max="0.5" step="0.05" />
+                            </div>
+                        </div>
+                        <div>
+                            <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">实验名</label>
+                            <input id="trName"
+                                class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none"
+                                type="text" value="myexp" placeholder="仅字母数字 _ - ." />
+                        </div>
+                    </div>
+                </div>
+                <!-- 自定义参数 -->
+                <div class="p-md border-b border-outline-variant">
+                    <h3 class="font-label-caps text-label-caps text-outline mb-md flex items-center gap-xs uppercase tracking-wider">
+                        <span class="material-symbols-outlined text-[14px]">code</span> 自定义参数
+                    </h3>
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="font-label-mono text-[10px] text-on-surface-variant">每行 key=value（覆盖上方基础参数）</label>
+                        <label class="flex items-center gap-xs cursor-pointer font-label-mono text-[10px] text-primary hover:opacity-80">
+                            <span class="material-symbols-outlined text-[14px]">file_open</span>导入 .yaml
+                            <input id="trYamlFile" type="file" accept=".yaml,.yml" class="hidden" />
+                        </label>
+                    </div>
+                    <textarea id="trCustomParams" rows="5"
+                        class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none resize-y"
+                        placeholder="optimizer=AdamW&#10;lr0=0.001&#10;cos_lr=True"></textarea>
+                    <p id="trYamlName" class="font-label-mono text-[10px] text-outline mt-xs hidden"></p>
+                </div>
+                <!-- 操作 -->
+                <div class="p-md mt-auto flex flex-col gap-sm">
+                    <label class="flex items-center gap-sm cursor-pointer text-on-surface font-body-md">
+                        <input id="trExportOnnx" type="checkbox" checked class="accent-primary w-4 h-4" />
+                        <span>训练后自动导出 ONNX</span>
+                    </label>
+                    <button id="trStartBtn" type="button"
+                        class="w-full py-sm bg-primary text-on-primary font-label-caps text-label-caps rounded-lg hover:opacity-90 transition-all shadow-md">开始训练</button>
+                    <button id="trStopBtn" type="button" disabled
+                        class="w-full py-xs border border-error text-error font-label-caps text-label-caps rounded-lg transition-all opacity-50 cursor-not-allowed">停止训练</button>
+                    <button id="trExportBtn" type="button"
+                        class="w-full py-xs border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">导出模型到项目</button>
+                </div>
+            </aside>
         </div>
 
         <!-- ===== 阶段 3：模型验证（占位，即将上线） ===== -->
@@ -573,6 +681,11 @@
     </footer>
     {# 阶段时间线切换逻辑已移入 image_list.js 的 bindStageNav() #}
     <script src="{{ url_for('static', filename='js/image_list.js') }}"></script>
+    <!-- 训练阶段：xterm.js 终端（本地化产物，零 CDN） -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/xterm/xterm.css') }}">
+    <script src="{{ url_for('static', filename='vendor/xterm/xterm.js') }}"></script>
+    <script src="{{ url_for('static', filename='vendor/xterm/xterm-addon-fit.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/train.js') }}"></script>
 </body>
 
 </html>
