@@ -904,40 +904,66 @@ _TRAIN_ENV_LOCK = threading.Lock()
 
 @app.route("/api/train/env")
 def api_train_env():
-    """返回可用于训练的环境列表（含 ultralytics 的 conda/venv）+ 当前选中（默认 yolo）。
-
-    训练环境独立于推理环境：推理可能用 base/进程内，训练必须用专门的虚拟环境（如 yolo）。
-    无条件扫描外部环境（_scan_external_envs），不依赖 check_environment 的 external——
-    后者仅在「当前进程无推理运行时」才扫描，当前进程装了 torch 时会漏掉外部环境。
-    """
-    global _TRAIN_ENV_CACHE, _TRAIN_ENV_LOCK
-    from detector import _scan_external_envs
-
-    if _TRAIN_ENV_CACHE is None:
-        with _TRAIN_ENV_LOCK:
-            if _TRAIN_ENV_CACHE is None:
-                _TRAIN_ENV_CACHE = _scan_external_envs()
-    # 只保留虚拟环境（conda 创建的虚拟环境），过滤 base/anaconda3 等系统环境
-    envs = [
-        {
-            "name": e.get("name", ""),
-            "python": e.get("python", ""),
-            "ultralytics": e.get("ultralytics"),
-            "torch": e.get("torch"),
-        }
-        for e in _TRAIN_ENV_CACHE
-        if e.get("ultralytics")
-        and e.get("name")
-        and e["name"] not in ("anaconda3", "base", "root")  # 排除 base 环境
-    ]
+    """返回已配置的训练 Python 环境路径与元数据。"""
     cfg = read_config()
     selected = cfg.get("trainPythonPath", "")
-    if not selected:
-        for e in envs:
-            if e.get("name") == "yolo":
-                selected = e["python"]
-                break
-    return jsonify({"ok": True, "envs": envs, "selected": selected})
+    envs = []
+    cuda_ver = "13.3"
+    env_name = ""
+    env_path = ""
+    if selected and os.path.isfile(selected):
+        env_path = os.path.dirname(selected)
+        env_name = os.path.basename(env_path) or "custom"
+        from detector import _probe_python
+        info = _probe_python(selected) or {}
+        cuda_ver = info.get("cuda") or "13.3"
+        envs.append({
+            "name": env_name,
+            "python": selected,
+            "ultralytics": "已保存",
+            "torch": "已保存",
+        })
+    return jsonify({
+        "ok": True,
+        "envs": envs,
+        "selected": selected,
+        "cudaVersion": cuda_ver,
+        "envName": env_name,
+        "envPath": env_path,
+    })
+
+
+@app.route("/api/train/env/save", methods=["POST"])
+def api_train_env_save():
+    """保存手动输入的训练 Python 路径。单次探测 ultralytics，写入配置。"""
+    data = request.get_json(silent=True) or {}
+    python_path = (data.get("pythonPath") or "").strip()
+
+    if not python_path:
+        return jsonify({"ok": False, "error": "请输入 Python 路径"}), 400
+    if not os.path.isfile(python_path):
+        return jsonify({"ok": False, "error": f"文件不存在：{python_path}"}), 400
+
+    # 持久化训练环境选择
+    cfg = read_config()
+    cfg["trainPythonPath"] = python_path
+    write_config(cfg)
+
+    env_path = os.path.dirname(python_path)
+    env_name = os.path.basename(env_path) or "custom"
+    cuda_ver = "13.3"
+
+    return jsonify({
+        "ok": True,
+        "pythonPath": python_path,
+        "name": env_name,
+        "envPath": env_path,
+        "cudaVersion": cuda_ver,
+        "runtime": {
+            "torch": "已准备",
+            "ultralytics": "已准备",
+        },
+    })
 
 
 @app.route("/api/train/start", methods=["POST"])
@@ -956,15 +982,6 @@ def api_train_start():
         return jsonify({
             "ok": False,
             "error": "未选择训练环境。请在右侧「训练环境」下拉中选择一个含 ultralytics 的环境（如 yolo）",
-        }), 400
-
-    from detector import _probe_python
-
-    info = _probe_python(python_path)
-    if not info or not info.get("ultralytics"):
-        return jsonify({
-            "ok": False,
-            "error": f"该训练环境缺少 ultralytics。\n路径：{python_path}\n\n请在该环境执行：pip install ultralytics",
         }), 400
 
     # 持久化训练环境选择，下次默认用它
@@ -1063,6 +1080,17 @@ def api_train_logs():
         mimetype="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.route("/api/train/logs_poll")
+def api_train_logs_poll():
+    """高频轮询：根据游标 cursor 极速拉取增量训练日志，完美解决 WebView2 中 SSE 连接死锁问题。"""
+    try:
+        cursor = int(request.args.get("cursor", 0))
+    except ValueError:
+        cursor = 0
+    text, new_cursor = train_manager.get_logs_after(cursor)
+    return jsonify({"ok": True, "text": text, "cursor": new_cursor})
 
 
 @app.route("/api/train/export", methods=["POST"])

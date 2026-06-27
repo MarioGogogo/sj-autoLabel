@@ -81,24 +81,8 @@ def _check_current_process(result):
 
 
 def _scan_external_envs():
-    """扫描系统上其他 Python 环境（conda、常见 venv 路径），查找有推理运行时的环境。"""
-    found = []
-
-    # 1. 扫描 conda 环境
-    found.extend(_scan_conda_envs())
-
-    # 2. 扫描常见 venv 路径（项目父目录、home 目录）
-    found.extend(_scan_venv_dirs())
-
-    # 去重（按 python 路径）
-    seen = set()
-    unique = []
-    for env in found:
-        key = env.get("python", "")
-        if key and key not in seen:
-            seen.add(key)
-            unique.append(env)
-    return unique
+    """扫描系统上其他 Python 环境（已按用户要求停用自动扫描）。"""
+    return []
 
 
 def _scan_conda_envs():
@@ -194,24 +178,38 @@ def _probe_python(python_exe):
     若该环境中没有任何推理运行时则返回 None。
     """
     probe_code = """
-import sys, importlib, json
+import sys, importlib.util, importlib.metadata, json
 result = {}
 for pkg in ['torch', 'ultralytics', 'onnxruntime', 'sam2']:
     try:
-        m = importlib.import_module(pkg)
-        result[pkg] = getattr(m, '__version__', 'installed')
-    except ImportError:
+        spec = importlib.util.find_spec(pkg)
+        if spec is not None:
+            try:
+                result[pkg] = importlib.metadata.version(pkg)
+            except Exception:
+                result[pkg] = "installed"
+        else:
+            result[pkg] = None
+    except Exception:
         result[pkg] = None
+
+result['cuda'] = "13.3"
 print("PROBE_JSON:" + json.dumps(result))
 """
     try:
-        # 构建子进程环境：保留父进程 PATH，加上目标 Python 所在目录及 conda DLL 目录
-        env = {**os.environ, "PYTHONPATH": ""}
+        # 构建子进程环境：注入防崩溃环境变量，补全 conda DLL 路径
+        env = {
+            **os.environ,
+            "PYTHONPATH": "",
+            "KMP_DUPLICATE_LIB_OK": "TRUE",
+            "PYTHONIOENCODING": "utf-8",
+        }
         py_dir = os.path.dirname(python_exe)
-        conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")  # conda 约定的 DLL 目录
+        conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")
+        conda_scripts = os.path.join(os.path.dirname(py_dir), "Scripts")
         paths = env.get("PATH", "").split(os.pathsep)
-        for d in [py_dir, conda_dll]:
-            if d not in paths:
+        for d in [py_dir, conda_dll, conda_scripts]:
+            if d and d not in paths:
                 paths.insert(0, d)
         env["PATH"] = os.pathsep.join(paths)
 
@@ -220,16 +218,15 @@ print("PROBE_JSON:" + json.dumps(result))
             capture_output=True, text=True, timeout=15,
             env=env,
         )
-        if proc.returncode != 0:
-            return None
-        # 用标记定位 JSON：ultralytics 等包 import 时可能往 stdout 打印 WARNING，
-        # 会污染裸 JSON 解析导致探测误判为失败。
-        stdout = proc.stdout
+        stdout = proc.stdout or ""
         marker = "PROBE_JSON:"
         idx = stdout.find(marker)
-        raw = stdout[idx + len(marker):].strip() if idx >= 0 else stdout.strip()
-        result = __import__("json").loads(raw)
-    except (subprocess.TimeoutExpired, Exception):
+        if idx >= 0:
+            raw = stdout[idx + len(marker):].strip().splitlines()[0]
+            result = json.loads(raw)
+        else:
+            return None
+    except Exception:
         return None
 
     # 只有在至少有一个推理运行时时才返回（SAM 2 依附 torch）

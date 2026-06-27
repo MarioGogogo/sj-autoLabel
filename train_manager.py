@@ -202,15 +202,19 @@ class TrainManager:
             "customParamsYaml": params.get("customParamsYaml", ""),
             "resultPath": result_path,
         }
-        args_json = json.dumps(args, ensure_ascii=False)
+        args_file = os.path.join(project, ".dataset_split", f"train_args_{name}.json")
+        try:
+            with open(args_file, "w", encoding="utf-8") as f:
+                json.dump(args, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            raise RuntimeError(f"创建训练参数配置文件失败：{e}")
 
         env = self._build_env(python_path)
         with self._lock:
             self._proc = subprocess.Popen(
-                [python_path, "-u", RUNNER_PATH, args_json],
+                [python_path, "-u", RUNNER_PATH, args_file],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                bufsize=0,                 # 二进制无缓冲，配合 read1 实时读取
                 env=env,
                 cwd=os.path.dirname(os.path.abspath(__file__)),
             )
@@ -224,16 +228,29 @@ class TrainManager:
         return {"dataYaml": data_yaml}
 
     def _build_env(self, python_path):
-        """复用 detector._start_worker 的环境构建：PATH 前置外部 python 目录 + conda DLL 目录、清空 PYTHONPATH。"""
-        env = {**os.environ, "PYTHONPATH": ""}
+        """复用 detector._start_worker 的环境构建：PATH 前置外部 python 目录 + conda DLL 目录、清空 PYTHONPATH，并注入 UTF-8 与强制彩色终端环境变量。"""
+        env = {
+            **os.environ,
+            "PYTHONPATH": "",
+            "KMP_DUPLICATE_LIB_OK": "TRUE",
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+            "FORCE_COLOR": "1",
+            "CLICOLOR_FORCE": "1",
+            "TERM": "xterm-256color",
+            "COLORTERM": "truecolor",
+        }
         py_dir = os.path.dirname(python_path)
-        conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")  # conda 约定的 DLL 目录
+        conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")
+        conda_scripts = os.path.join(os.path.dirname(py_dir), "Scripts")
         paths = env.get("PATH", "").split(os.pathsep)
-        for d in (py_dir, conda_dll):
+        for d in (py_dir, conda_dll, conda_scripts):
             if d and d not in paths:
                 paths.insert(0, d)
         env["PATH"] = os.pathsep.join(paths)
         return env
+
 
     def _reader_loop(self):
         """后台线程：持续读子进程 stdout（stderr 已合流）→ 写 deque 历史 + 广播。EOF 后推断终态。"""
@@ -242,15 +259,17 @@ class TrainManager:
         try:
             if stream is not None:
                 while True:
-                    # 二进制 read1：读到任何可用字节即返回（保留 \r 让 xterm 正确渲染进度条原地刷新）
+                    # read1: 从 BufferedReader 读到任何可用字节即返回，保持实时性
                     chunk = stream.read1(4096)
                     if not chunk:
                         break
                     text = chunk.decode("utf-8", "replace")
                     self._buffer.append(text)
                     self._broadcast(text)
-        except Exception:
-            pass
+        except Exception as e:
+            err_msg = f"\n[ERROR] 日志读取线程异常：{e}\n"
+            self._buffer.append(err_msg)
+            self._broadcast(err_msg)
 
         try:
             proc.wait()
@@ -370,7 +389,15 @@ class TrainManager:
 
         return {"dest": dest_pt, "onnx": dest_onnx}
 
-    # ===================== 清理 =====================
+    def get_logs_after(self, cursor):
+        """获取游标 cursor 之后的所有日志片段，并返回最新 cursor。"""
+        with self._lock:
+            buf = list(self._buffer)
+        if cursor < 0:
+            cursor = 0
+        new_chunks = buf[cursor:]
+        new_cursor = len(buf)
+        return "".join(new_chunks), new_cursor
 
     def _reset_state(self):
         self._state = "idle"

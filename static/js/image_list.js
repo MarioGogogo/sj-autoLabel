@@ -122,8 +122,8 @@
     function applyTransform() {
         if (!canvasStage) return;
         canvasStage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.scale})`;
-        // 边缘条和把手逆缩放：保持视觉尺寸恒定（上限 3x，避免缩太小时过大）。
-        const inv = Math.min(3, 1 / view.scale);
+        // 边缘条、标注框线条、标签和把手逆缩放：绝对保持物理视觉尺寸恒定，不随画布缩放而放大缩小。
+        const inv = 1 / view.scale;
         canvasBoxes.style.setProperty('--bs', inv);
         if (canvasZoom) {
             canvasZoom.textContent = `${Math.round(view.scale * 100)}%`;
@@ -232,7 +232,7 @@
     let samMode = false;  // SAM 点击分割工具是否开启
     let samLoaded = false; // SAM 模型是否已加载
     let samAbort = null;  // AbortController，取消进行中的 SAM 分割
-    let lineWidth = 2;    // 画框粗细（px）
+    let lineWidth = 1;    // 画框粗细（px）
     let confThreshold = 50; // 置信度阈值（0-100），后续接入模型检测时使用
     let boxSeq = 0; // 新建框序号，保证 id 唯一
 
@@ -344,11 +344,12 @@
             box.style.cssText =
                 `left:${(b.x * 100).toFixed(2)}%;top:${(b.y * 100).toFixed(2)}%;` +
                 `width:${(b.w * 100).toFixed(2)}%;height:${(b.h * 100).toFixed(2)}%;` +
-                `--bw:${lineWidth};border-color:${hex};`;
+                `--bw:${lineWidth};border-color:${hex};--hc:${hex};`;
             const lbl = document.createElement("div");
             lbl.className = "bbox-label text-white";
             lbl.style.backgroundColor = hex;
-            lbl.textContent = `${b.label} ${b.score}%`;
+            const scoreText = (b.score !== undefined && b.score !== null && b.score < 100) ? ` ${Math.round(b.score)}%` : "";
+            lbl.textContent = `${b.label}${scoreText}`;
             box.appendChild(lbl);
             // 4 条边缘命中条（中央穿透，便于框选内部小目标 / 绘制穿透）。
             ["top", "right", "bottom", "left"].forEach((side) => {

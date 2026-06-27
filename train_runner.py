@@ -69,7 +69,37 @@ def write_result(path, data):
         pass
 
 
+class UnbufferedWriter:
+    """自动 flush 写入包装器，确保任何库（包括 ultralytics、tqdm、logging）写出的字符实时刷入管道。"""
+    def __init__(self, stream):
+        self.stream = stream
+    def write(self, data):
+        self.stream.write(data)
+        self.stream.flush()
+    def writelines(self, datas):
+        self.stream.writelines(datas)
+        self.stream.flush()
+    def __getattr__(self, attr):
+        return getattr(self.stream, attr)
+
+
 def main(args):
+    # 强制将 sys.stdout / sys.stderr 升级为无缓冲流
+    sys.stdout = UnbufferedWriter(sys.stdout)
+    sys.stderr = UnbufferedWriter(sys.stderr)
+
+    # 重新配置标准输出编码，确保在 Windows 终端和管道下正常输出 utf-8 彩色字符
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8")
+        except Exception:
+            pass
+
     # 合并训练参数：基础控件 < 文本框 key=value < yaml 文件（后者覆盖前者同名键）
     final = {}
     final.update(args.get("baseKwargs", {}))
@@ -84,6 +114,8 @@ def main(args):
     final["data"] = args["dataYaml"]
     final["project"] = args["runsDir"]
     final["name"] = args["name"]
+    # 默认开启详细日志输出，确保完整打印模型结构、硬件信息和每个 epoch 的损失/指标明细
+    final.setdefault("verbose", True)
 
     print(f"训练参数：{json.dumps(final, ensure_ascii=False, default=str)}", flush=True)
 
@@ -91,6 +123,7 @@ def main(args):
 
     m = YOLO(args["model"])
     m.train(**final)
+
 
     # 推导 best.pt 实际输出路径（兼容不同 ultralytics 版本的目录组织）
     save_dir = None
@@ -118,13 +151,21 @@ def main(args):
 
 
 if __name__ == "__main__":
+    print("\x1b[1;32m[RUNNER] 训练子进程建立成功，准备加载 YOLO...\x1b[0m", flush=True)
     if len(sys.argv) < 2:
-        print("用法：python train_runner.py <args_json>", file=sys.stderr)
+        print("用法：python train_runner.py <args_json_or_file>", file=sys.stderr, flush=True)
         sys.exit(2)
+
+    raw_arg = sys.argv[1]
+    args = None
     try:
-        args = json.loads(sys.argv[1])
+        if os.path.isfile(raw_arg):
+            with open(raw_arg, "r", encoding="utf-8") as f:
+                args = json.load(f)
+        else:
+            args = json.loads(raw_arg)
     except Exception as e:
-        print(f"参数解析失败：{e}", file=sys.stderr)
+        print(f"参数解析失败：{e}", file=sys.stderr, flush=True)
         sys.exit(2)
 
     try:
@@ -134,5 +175,6 @@ if __name__ == "__main__":
 
         tb = traceback.format_exc()
         print(tb, flush=True)  # 完整 traceback 推送到前端 xterm，便于排错
-        write_result(args.get("resultPath", ""), {"status": "error", "error": str(e), "tb": tb})
+        if isinstance(args, dict):
+            write_result(args.get("resultPath", ""), {"status": "error", "error": str(e), "tb": tb})
         sys.exit(1)

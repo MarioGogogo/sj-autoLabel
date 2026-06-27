@@ -221,11 +221,11 @@ body {
     position: absolute;
     border-width: calc(var(--bw, 2) * 1px * var(--bs, 1));
     border-style: solid;
-    border-radius: calc(2px * var(--bs, 1));
+    border-radius: 0;
     box-sizing: border-box;
     /* 框体本身中空穿透：鼠标可落到内部的小目标/画布上，不再被大框挡住。 */
     pointer-events: none;
-    transition: box-shadow 0.12s ease, background-color 0.12s ease;
+    transition: background-color 0.12s ease;
 }
 
 /* 边缘命中条：4 条边各自接收事件，中央无元素 → 鼠标穿透到内部小目标/画布。
@@ -248,43 +248,39 @@ body {
 .canvas-stage.drawing-mode .bbox-edge { pointer-events: none; }
 
 .canvas-stage .bbox:hover {
-    background-color: rgba(0, 61, 155, 0.08);
+    background-color: rgba(255, 255, 255, 0.08);
 }
 
-/* 选中态：实心高亮 + 外发光，把手由 JS 注入的 .handle 元素显示。 */
+/* 选中态：标注框被选中时的样式（参考专业标注软件，使用原本类别线条色，不叠加蓝色外发光）。 */
 .canvas-stage .bbox.selected {
-    box-shadow: 0 0 0 calc(2px * var(--bs, 1)) rgba(0, 61, 155, 0.45);
-    background-color: rgba(0, 61, 155, 0.12);
     z-index: 5;
 }
 
 .canvas-stage .bbox-label {
     position: absolute;
-    left: -1px;
+    left: calc(-1px * var(--bs, 1));
     top: calc(-18px * var(--bs, 1));
-    padding: 0 calc(4px * var(--bs, 1));
-    height: calc(16px * var(--bs, 1));
-    line-height: calc(16px * var(--bs, 1));
-    font-size: calc(10px * var(--bs, 1));
-    font-weight: 700;
-    border-radius: calc(2px * var(--bs, 1)) calc(2px * var(--bs, 1)) 0 0;
+    padding: 0 calc(5px * var(--bs, 1));
+    height: calc(18px * var(--bs, 1));
+    line-height: calc(18px * var(--bs, 1));
+    font-size: calc(11px * var(--bs, 1));
+    font-weight: 600;
+    border-radius: 0;
     white-space: nowrap;
     pointer-events: none;
+    box-sizing: border-box;
 }
 
-/* 选中框的 8 个尺寸调整把手（覆盖伪元素的角点，改用真实元素以便逐个绑定方向）。
-   视觉尺寸通过 --bs（逆缩放）保持恒定，避免放大后把手/边缘条遮住物体。 */
+/* 选中框的 8 个尺寸调整把手（实心圆形点，视觉尺寸通过 --bs 逆缩放保持恒定）。
+   圆心精准对齐边框顶点与各边中点。 */
 .canvas-stage .bbox .handle {
-    /* 圆心要落在 .bbox 边框的中心线上。absolute 定位原点是 padding-box（边框内侧），
-       故偏移 = (直径 + 边框宽) / 2，使圆心精确对齐边框中线，不外偏、不内偏。 */
-    --h: calc((7px + var(--bw, 2) * 1px) * var(--bs, 1) / 2);
     --s: calc(7px * var(--bs, 1));
+    --h: calc(3.5px * var(--bs, 1));
     position: absolute;
     width: var(--s);
     height: var(--s);
-    background: #003d9b;
-    border: calc(1.5px * var(--bs, 1)) solid #fff;
     border-radius: 50%;
+    background-color: var(--hc, #00ff00);
     pointer-events: auto;
     z-index: 6;
     box-sizing: border-box;
@@ -302,7 +298,7 @@ body {
 /* 画框预览（绘制过程中的临时框）。 */
 .canvas-stage .bbox.drawing {
     border-style: dashed;
-    background-color: rgba(0, 61, 155, 0.1);
+    background-color: rgba(255, 255, 255, 0.1);
 }
 
 /* 工具栏按钮激活态。 */

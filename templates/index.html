@@ -221,10 +221,10 @@
                     <!-- 画框粗细滑块：仅画框模式可见 -->
                     <div id="lineWidthGroup" class="hidden items-center gap-xs px-1">
                         <span class="material-symbols-outlined text-sm text-on-surface-variant">line_weight</span>
-                        <input id="lineWidthSlider" type="range" min="1" max="8" value="2"
+                        <input id="lineWidthSlider" type="range" min="1" max="8" value="1"
                             class="w-16 h-1 bg-outline-variant/30 rounded-lg appearance-none cursor-pointer accent-primary"
                             title="画框粗细" />
-                        <span id="lineWidthVal" class="font-label-mono text-[10px] text-on-surface-variant w-5 text-right">2</span>
+                        <span id="lineWidthVal" class="font-label-mono text-[10px] text-on-surface-variant w-5 text-right">1</span>
                     </div>
                     <div class="w-px h-6 bg-outline-variant mx-1"></div>
                     <button id="detectBtn" type="button" title="识别当前图片"
@@ -463,12 +463,21 @@
                     <h3 class="font-label-caps text-label-caps text-outline mb-md flex items-center gap-xs uppercase tracking-wider">
                         <span class="material-symbols-outlined text-[14px]">dns</span> 训练环境
                     </h3>
-                    <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">Python 虚拟环境（须含 ultralytics）</label>
+                    <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">自动扫描（含 ultralytics 的 conda/venv 环境）</label>
                     <select id="trEnvSelect"
                         class="w-full bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none">
                         <option value="">加载中…</option>
                     </select>
-                    <p id="trEnvHint" class="font-label-mono text-[10px] text-outline mt-xs">默认 yolo 环境；可切 yolo26 等</p>
+                    <p id="trEnvHint" class="font-label-mono text-[10px] text-outline mt-xs mb-md">如 yolo、yolo26 等；仅显示含 ultralytics 的环境</p>
+
+                    <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">或手动输入 Python 路径：</label>
+                    <div class="flex gap-xs">
+                        <input id="trEnvPythonInput" type="text" placeholder="D:\miniconda3\envs\yolo\python.exe"
+                            class="flex-1 bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-xs py-2 font-label-mono text-xs text-on-surface outline-none" />
+                        <button id="trEnvSaveBtn"
+                            class="py-2 px-md bg-primary text-on-primary font-label-caps text-label-caps rounded-lg hover:opacity-90 transition-all shadow-sm whitespace-nowrap">保存</button>
+                    </div>
+                    <p id="trEnvConfigError" class="font-label-mono text-[10px] text-error hidden mt-xs"></p>
                 </div>
                 <!-- 训练参数 -->
                 <div class="p-md border-b border-outline-variant">
