@@ -20,9 +20,15 @@ import argparse
 import json
 import os
 import sys
+
+# 放行 OpenMP 运行时冲突（torch + MKL 在 Windows/conda 常见，否则 import torch 时 OMP Error #15 abort）。
+# 须在任何 torch import 之前；Worker 是独立进程，显式设一次更稳。
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import time
 import traceback
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+from sam_engine import SamHolder
 
 
 # ===== 模型持有者（模块级单例） =====
@@ -178,6 +184,7 @@ def _iou(a, b):
 
 
 holder = ModelHolder()
+sam_holder = SamHolder()
 
 
 # ===== HTTP Handler =====
@@ -208,6 +215,9 @@ class WorkerHandler(BaseHTTPRequestHandler):
                 "device": holder.device,
                 "format": holder.format,
                 "labels": holder.labels[:20],
+                "sam_loaded": sam_holder.is_loaded,
+                "sam_variant": sam_holder.variant,
+                "sam_device": sam_holder.device,
             })
         else:
             self._send_json({"ok": False, "error": "not found"}, 404)
@@ -247,6 +257,45 @@ class WorkerHandler(BaseHTTPRequestHandler):
                     "elapsed_ms": elapsed,
                     "device": holder.device,
                 })
+
+            elif self.path == "/load_sam":
+                data = self._read_body()
+                variant = data.get("variant", "large")
+                checkpoint = data.get("checkpoint", "")
+                sam_holder.load(variant, checkpoint)
+                self._send_json({
+                    "ok": True,
+                    "variant": sam_holder.variant,
+                    "device": sam_holder.device,
+                })
+
+            elif self.path == "/segment":
+                if not sam_holder.is_loaded:
+                    self._send_json({"ok": False, "error": "SAM 模型未加载"}, 400)
+                    return
+                data = self._read_body()
+                image_path = data.get("image_path", "")
+                points = data.get("points", [])
+                labels = data.get("labels", [1] * len(points))
+                if not image_path or not os.path.isfile(image_path):
+                    self._send_json({"ok": False, "error": "图片不存在"}, 400)
+                    return
+                t0 = time.time()
+                box = sam_holder.segment(image_path, points, labels)
+                elapsed = round((time.time() - t0) * 1000)
+                if box is None:
+                    self._send_json({"ok": False, "error": "未分割出目标", "elapsed_ms": elapsed})
+                    return
+                self._send_json({
+                    "ok": True,
+                    "box": box,
+                    "elapsed_ms": elapsed,
+                    "device": sam_holder.device,
+                })
+
+            elif self.path == "/unload_sam":
+                sam_holder.unload()
+                self._send_json({"ok": True, "variant": sam_holder.variant})
 
             elif self.path == "/shutdown":
                 self._send_json({"ok": True})

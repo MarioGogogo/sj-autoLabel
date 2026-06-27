@@ -75,6 +75,14 @@
     const modelStatusText = document.getElementById("modelStatusText");
     const modelLatency = document.getElementById("modelLatency");
     const modelGpu = document.getElementById("modelGpu");
+    // SAM 2 分割
+    const samBtn = document.getElementById("samBtn");
+    const samVariantSelect = document.getElementById("samVariantSelect");
+    const samCheckpointInput = document.getElementById("samCheckpointInput");
+    const loadSamBtn = document.getElementById("loadSamBtn");
+    const unloadSamBtn = document.getElementById("unloadSamBtn");
+    const samStatusDot = document.getElementById("samStatusDot");
+    const samStatusText = document.getElementById("samStatusText");
     // 检测按钮 + 自动标注
     const detectBtn = document.getElementById("detectBtn");
     const undoBtn = document.getElementById("undoBtn");
@@ -221,6 +229,9 @@
     let currentBoxes = [];
     let selectedBoxId = null;
     let drawMode = false; // 画框工具是否开启
+    let samMode = false;  // SAM 点击分割工具是否开启
+    let samLoaded = false; // SAM 模型是否已加载
+    let samAbort = null;  // AbortController，取消进行中的 SAM 分割
     let lineWidth = 2;    // 画框粗细（px）
     let confThreshold = 50; // 置信度阈值（0-100），后续接入模型检测时使用
     let boxSeq = 0; // 新建框序号，保证 id 唯一
@@ -396,7 +407,33 @@
         if (canvasStage) canvasStage.classList.toggle("drawing-mode", on);
         document.querySelectorAll(".tool-btn").forEach((b) => b.classList.toggle("active", on));
         if (lineWidthGroup) lineWidthGroup.classList.toggle("hidden", !on);
-        if (on) selectBox(null); // 进入绘制时取消选中，避免干扰
+        if (on) {
+            selectBox(null); // 进入绘制时取消选中，避免干扰
+            // 关闭 SAM 模式，并确保 samBtn 不被上面的 forEach 点亮。
+            samMode = false;
+            if (canvasStage) canvasStage.classList.remove("sam-mode");
+            if (samBtn) samBtn.classList.remove("active");
+        }
+    }
+
+    /** 切换 SAM 点击分割工具开关（与画框互斥）。 */
+    function setSamMode(on) {
+        samMode = on;
+        if (on) {
+            // 关闭画框模式。
+            if (drawMode) {
+                drawMode = false;
+                if (canvasStage) canvasStage.classList.remove("drawing-mode");
+                if (lineWidthGroup) lineWidthGroup.classList.add("hidden");
+            }
+            // 清掉所有 tool-btn 的 active，只点亮 samBtn。
+            document.querySelectorAll(".tool-btn").forEach((b) => b.classList.remove("active"));
+            if (samBtn) samBtn.classList.add("active");
+            selectBox(null);
+        } else {
+            if (samBtn) samBtn.classList.remove("active");
+        }
+        if (canvasStage) canvasStage.classList.toggle("sam-mode", on);
     }
 
     /** 选中某个类别（决定新画框的颜色与标签）。 */
@@ -645,6 +682,20 @@
             if (e.button !== 0) return;
             const handleEl = e.target.closest(".handle");
             const edgeEl = e.target.closest(".bbox-edge");
+
+            // SAM 点击分割模式：任意位置点击即触发分割（坐标转换与画框一致）。
+            if (samMode) {
+                e.stopPropagation();
+                e.preventDefault();
+                if (!samLoaded) { showToast("请先加载 SAM 模型"); return; }
+                if (!activeCategory.label) { showToast("请先选择类别"); return; }
+                const r = pxToRatio(
+                    e.clientX - canvasFrame.getBoundingClientRect().left,
+                    e.clientY - canvasFrame.getBoundingClientRect().top
+                );
+                segmentAtPoint(clamp(r.x, 0, 1), clamp(r.y, 0, 1));
+                return;
+            }
 
             // 绘制模式：任意位置（含已有框内部）都画新框，便于在大目标里框选小目标。
             if (drawMode) {
@@ -939,6 +990,7 @@
                 const act = item.dataset.act;
                 hideCtxMenu();
                 if (act === "draw") setDrawMode(!drawMode);
+                else if (act === "sam") setSamMode(!samMode);
                 else if (act === "delete") deleteSelectedBox();
                 else if (act === "reset") resetView();
                 else if (act === "clearBoxes") clearAllBoxes();
@@ -977,13 +1029,17 @@
             } else if (e.key === "b" || e.key === "B") {
                 // B：切换画框工具。
                 e.preventDefault(); setDrawMode(!drawMode);
+            } else if (e.key === "s" || e.key === "S") {
+                // S：切换 SAM 点击分割。
+                e.preventDefault(); setSamMode(!samMode);
             } else if (e.key === "Escape") {
                 // Esc：关闭对话框 / 退出绘制模式 / 取消选中 / 关闭右键菜单。
                 if (confirmDialog && !confirmDialog.classList.contains("hidden")) {
                     e.preventDefault(); resolveConfirm(false);
                 } else if (catDialog && !catDialog.classList.contains("hidden")) {
                     e.preventDefault(); closeAddCategoryDialog();
-                } else if (drawMode) setDrawMode(false);
+                } else if (samMode) setSamMode(false);
+                else if (drawMode) setDrawMode(false);
                 else if (selectedBoxId) selectBox(null);
                 hideCtxMenu();
             } else if ((e.ctrlKey || e.metaKey) && (e.key === "=" || e.key === "+")) {
@@ -1689,6 +1745,100 @@
         return modelStatusDot && modelStatusDot.classList.contains("bg-emerald-500");
     }
 
+    // ===================== SAM 2 分割（独立引擎，与 YOLO 并列） =====================
+
+    /** 加载 SAM 2 模型。 */
+    async function loadSam() {
+        const variant = samVariantSelect ? samVariantSelect.value : "large";
+        const checkpoint = samCheckpointInput ? samCheckpointInput.value.trim() : "";
+        if (loadSamBtn) { loadSamBtn.disabled = true; loadSamBtn.textContent = "加载中…"; }
+        try {
+            const resp = await fetch("/api/sam/load", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ variant, checkpoint }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "加载失败");
+            samLoaded = true;
+            if (samStatusDot) samStatusDot.className = "w-2 h-2 rounded-full bg-emerald-500 animate-pulse";
+            if (samStatusText) samStatusText.textContent = `SAM：${data.variant}`;
+            showNotification({
+                type: "success",
+                title: "SAM 模型已加载",
+                message: `${data.variant} → ${data.device || "cpu"}`,
+            });
+        } catch (e) {
+            showToast("SAM 加载失败：" + e.message);
+            if (samStatusDot) samStatusDot.className = "w-2 h-2 rounded-full bg-error";
+            if (samStatusText) samStatusText.textContent = "SAM：加载失败";
+        } finally {
+            if (loadSamBtn) { loadSamBtn.disabled = false; loadSamBtn.textContent = "加载 SAM"; }
+        }
+    }
+
+    /** 卸载 SAM 模型，释放显存（不影响 YOLO）。 */
+    async function unloadSam() {
+        try {
+            const resp = await fetch("/api/sam/unload", { method: "POST" });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "卸载失败");
+        } catch (e) {
+            showToast("SAM 卸载失败：" + e.message);
+            return;
+        }
+        samLoaded = false;
+        if (samMode) setSamMode(false); // 模型没了，退出分割模式
+        if (samStatusDot) samStatusDot.className = "w-2 h-2 rounded-full bg-outline-variant";
+        if (samStatusText) samStatusText.textContent = "SAM：未加载";
+        showToast("SAM 已卸载，显存已释放");
+    }
+
+    /** 对当前图片的指定归一化点做 SAM 分割，成功则追加外接框并落盘。 */
+    async function segmentAtPoint(nx, ny) {
+        if (!selectedName) return;
+        if (!samLoaded) { showToast("请先加载 SAM 模型"); return; }
+        if (!activeCategory.label) { showToast("请先选择类别"); return; }
+        if (samAbort) { samAbort.abort(); samAbort = null; }
+        samAbort = new AbortController();
+        if (samBtn) samBtn.classList.add("animate-pulse");
+        try {
+            const resp = await fetch("/api/sam/predict", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image_name: selectedName,
+                    points: [[nx, ny]],
+                    labels: [1],
+                }),
+                signal: samAbort.signal,
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "分割失败");
+            if (!data.box) { showToast("未分割出目标，换个位置试试"); return; }
+            const b = data.box;
+            currentBoxes.push({
+                id: `box_${nextBoxSeq()}`,
+                label: activeCategory.label,
+                score: b.score || 100,
+                x: b.x, y: b.y, w: b.w, h: b.h,
+                hex: activeCategory.hex,
+            });
+            selectedBoxId = null;
+            renderBoxes();
+            pushHistory();
+            scheduleSaveLabels();
+            if (modelLatency) modelLatency.textContent = `延迟：${data.elapsed_ms ?? "--"}ms`;
+            if (modelGpu) modelGpu.textContent = `设备：${data.device || "--"}`;
+        } catch (e) {
+            if (e.name === "AbortError") return;
+            showToast("分割失败：" + e.message);
+        } finally {
+            samAbort = null;
+            if (samBtn) samBtn.classList.remove("animate-pulse");
+        }
+    }
+
     // ===================== 事件绑定 =====================
 
     /** 绑定事件。 */
@@ -1789,6 +1939,10 @@
 
         // 画框工具按钮切换绘制模式。
         if (drawBoxBtn) drawBoxBtn.addEventListener("click", () => setDrawMode(!drawMode));
+        // SAM 点击分割工具按钮 + 加载按钮。
+        if (samBtn) samBtn.addEventListener("click", () => setSamMode(!samMode));
+        if (loadSamBtn) loadSamBtn.addEventListener("click", loadSam);
+        if (unloadSamBtn) unloadSamBtn.addEventListener("click", unloadSam);
 
         // 画框粗细滑块。
         if (lineWidthSlider) {

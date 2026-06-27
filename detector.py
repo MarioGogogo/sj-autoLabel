@@ -11,6 +11,8 @@ import subprocess
 import sys
 import time
 
+from sam_engine import SamHolder
+
 # ===================== 环境检测 =====================
 
 _ENV_CACHE = None  # 缓存检测结果，只跑一次
@@ -33,7 +35,7 @@ def check_environment():
     if _ENV_CACHE is not None:
         return _ENV_CACHE
 
-    result = {"pt": False, "onnx": False, "details": {}, "external": []}
+    result = {"pt": False, "onnx": False, "sam2": False, "details": {}, "external": []}
 
     # ---- 当前进程检测 ----
     _check_current_process(result)
@@ -69,6 +71,13 @@ def _check_current_process(result):
         result["details"]["onnxruntime"] = _try_version("onnxruntime")
     else:
         result["details"]["onnxruntime"] = "未安装（pip install onnxruntime）"
+
+    # SAM 2（.pt 分割模型，交互式点选）
+    if importlib.util.find_spec("sam2"):
+        result["sam2"] = True
+        result["details"]["sam2"] = _try_version("sam2")
+    else:
+        result["details"]["sam2"] = "未安装（pip install sam2）"
 
 
 def _scan_external_envs():
@@ -187,7 +196,7 @@ def _probe_python(python_exe):
     probe_code = """
 import sys, importlib, json
 result = {}
-for pkg in ['torch', 'ultralytics', 'onnxruntime']:
+for pkg in ['torch', 'ultralytics', 'onnxruntime', 'sam2']:
     try:
         m = importlib.import_module(pkg)
         result[pkg] = getattr(m, '__version__', 'installed')
@@ -217,8 +226,12 @@ print(json.dumps(result))
     except (subprocess.TimeoutExpired, Exception):
         return None
 
-    # 只有在至少有一个推理运行时时才返回
-    has_any = bool(result.get("torch") and result.get("ultralytics")) or bool(result.get("onnxruntime"))
+    # 只有在至少有一个推理运行时时才返回（SAM 2 依附 torch）
+    has_any = (
+        bool(result.get("torch") and result.get("ultralytics"))
+        or bool(result.get("onnxruntime"))
+        or bool(result.get("torch") and result.get("sam2"))
+    )
     if not has_any:
         return None
 
@@ -227,6 +240,7 @@ print(json.dumps(result))
         "torch": result.get("torch"),
         "ultralytics": result.get("ultralytics"),
         "onnxruntime": result.get("onnxruntime"),
+        "sam2": result.get("sam2"),
     }
 
 
@@ -307,6 +321,11 @@ class Detector:
         self._worker_proc = None
         self._worker_port = 0
         self._worker_python = ""
+
+        # SAM 2 分割引擎（独立于 YOLO，两者可同时加载、互不干扰）
+        self._sam_holder = SamHolder()
+        self.sam_variant = None
+        self.sam_device = "cpu"
 
     # ---- Worker 管理 ----
 
@@ -624,6 +643,62 @@ class Detector:
             if not overlap:
                 keep.append(b)
         return keep
+
+    # ---- SAM 2 分割（独立引擎，与 YOLO 并列） ----
+
+    def load_sam(self, variant="large", checkpoint=""):
+        """加载 SAM 2 模型。Worker 模式转发 /load_sam，否则进程内加载。"""
+        if self._use_worker:
+            self._start_worker()
+            status, data = self._worker_request(
+                "POST", "/load_sam",
+                {"variant": variant, "checkpoint": checkpoint},
+                timeout=180,  # 首次加载/下载可能较慢
+            )
+            if status != 200 or not data.get("ok"):
+                raise RuntimeError(data.get("error", "SAM 加载失败"))
+            self.sam_variant = data.get("variant", variant)
+            self.sam_device = data.get("device", "cpu")
+        else:
+            self._sam_holder.load(variant, checkpoint)
+            self.sam_variant = self._sam_holder.variant
+            self.sam_device = self._sam_holder.device
+
+    def segment(self, image_path, points, labels):
+        """点提示分割，返回归一化外接框 {x,y,w,h,score} 或 None。"""
+        if self._use_worker:
+            if self._worker_proc is None or self._worker_proc.poll() is not None:
+                raise RuntimeError("Worker 进程未运行，请检查推理环境配置")
+            status, data = self._worker_request(
+                "POST", "/segment",
+                {"image_path": image_path, "points": points, "labels": labels},
+                timeout=60,
+            )
+            if status != 200 or not data.get("ok"):
+                raise RuntimeError(data.get("error", "SAM 分割失败"))
+            return data.get("box")
+        if not self._sam_holder.is_loaded:
+            raise RuntimeError("SAM 模型未加载，请先加载")
+        return self._sam_holder.segment(image_path, points, labels)
+
+    def unload_sam(self):
+        """卸载 SAM 模型，释放显存（不影响 YOLO）。"""
+        if self._use_worker:
+            if self._worker_proc and self._worker_proc.poll() is None:
+                status, data = self._worker_request("POST", "/unload_sam", {}, timeout=30)
+                if status != 200 or not data.get("ok"):
+                    raise RuntimeError(data.get("error", "SAM 卸载失败"))
+        else:
+            self._sam_holder.unload()
+        self.sam_variant = None
+        self.sam_device = "cpu"
+
+    @property
+    def sam_is_loaded(self):
+        if self._use_worker:
+            health = self._worker_health()
+            return health is not None and health.get("sam_loaded", False)
+        return self._sam_holder.is_loaded
 
     @property
     def is_loaded(self):

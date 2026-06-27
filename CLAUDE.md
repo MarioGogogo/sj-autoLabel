@@ -31,6 +31,7 @@ npm run build:css     # 重新扫描 HTML/JS 并生成 static/css/tailwind.css
 app.py                  Flask 入口：路由、项目、模型加载、推理 API
 detector.py             检测器模块：环境检测 + Worker 管理 + 进程内推理（全局单例）
 worker.py               独立推理 Worker 子进程（stdlib only，供外部 Python 环境运行）
+sam_engine.py           SAM 2 分割引擎共享逻辑（SamHolder，worker/detector 复用）
 requirements.txt        Flask + Pillow + pywebview
 package.json            Tailwind CSS + 字体 npm 依赖
 tailwind.config.js      Tailwind 配置
@@ -124,6 +125,7 @@ showToast("操作失败：" + err.message);
 | 键 | 功能 |
 |---|---|
 | `B` | 画框工具开关 |
+| `S` | SAM 点击分割工具开关 |
 | `Esc` | 关闭对话框 / 退出绘制 / 取消选中 |
 | `Del` / `Backspace` | 删除选中框 |
 | `←/→/↑/↓` | 切换图片 |
@@ -169,12 +171,15 @@ app 启动
 | `POST /api/model/load` | 加载模型（进程内或 Worker 转发 `/load`） |
 | `GET /api/model/status` | 返回 `{loaded, model, device, labels}` |
 | `POST /api/detect/<image_name>` | 单张推理（进程内或 Worker 转发 `/predict`） |
+| `POST /api/sam/load` | 加载 SAM 2 分割模型（独立引擎，与 YOLO 并列） |
+| `POST /api/sam/predict` | 点提示分割 → 外接框（转发 `/segment`） |
+| `POST /api/sam/unload` | 卸载 SAM 释放显存（不影响 YOLO） |
 
 ### Worker 子进程（`worker.py`）
 
 - **零额外依赖**：只使用 Python stdlib（`http.server`），外部环境只需 torch/onnx
 - **HTTP 协议**：监听 `127.0.0.1:5090-5120`
-- **端点**：`GET /health` / `POST /load` / `POST /predict` / `POST /shutdown`
+- **端点**：`GET /health` / `POST /load` / `POST /predict` / `POST /load_sam` / `POST /segment` / `POST /shutdown`
 - **主进程通信**：启动后 stdout 输出 `WORKER_READY:<port>`，主进程解析端口后 HTTP 调用
 
 ### 防重复机制
@@ -184,12 +189,30 @@ app 启动
 - **强制重检**：手动点「识别」按钮传 `force=true`
 - **换模型**：`detectedCache` / `_detected_images` 自动清空
 
+### SAM 2 分割引擎（独立于 YOLO）
+
+交互式分割：用户在画布上点一下 → SAM 2 输出像素掩码 → 转外接矩形框 → 落盘（复用 YOLO 矩形格式）。与 YOLO 整图检测并列，可同时加载、互不干扰。
+
+- **共享逻辑**：`sam_engine.py` 的 `SamHolder`，`worker.py` 与 `detector.py` 都 import（避免分割逻辑重复，吸取 ONNX 解析的历史教训）
+- **加载**：`POST /api/sam/load {variant, checkpoint?}` → `SamHolder.load()`
+  - 优先用本地 `.pt`（`build_sam2`，逐个尝试候选 config 路径，兼容 sam2.0/2.1）
+  - 失败回退 `from_pretrained`（自动下载到 HF 缓存，首次联网）
+- **分割**：`POST /api/sam/predict {image_name, points:[[nx,ny]], labels:[1]}` → `{box:{x,y,w,h,score}}`
+  - 前端传归一化点，后端转像素（坐标转换在后端，沿用约定）
+  - **image embedding 缓存**：同图连续点选只 `set_image` 一次（首次 1-3s，后续 ~200ms）
+  - SAM 点选**不走** YOLO 的 `_detected_images` 缓存（每次点选坐标不同）
+- **前端**：`samMode`（`S` 键 / 工具栏按钮 / 右键菜单），`segmentAtPoint(nx,ny)` 复用画框的 `pxToRatio` 坐标转换；结果 push 进 `currentBoxes` 走既有渲染 / 撤销栈 / 自动保存
+- **变体**：`large` / `base_plus` / `small` / `tiny`（精度↔速度权衡）
+- **互斥**：`samMode` 与 `drawMode` 互斥（点选 vs 画框）
+- **生命周期**：SAM 模型加载后常驻 Worker 显存，不自动卸载；点「卸载 SAM」按钮（`/api/sam/unload` → worker `/unload_sam` + `torch.cuda.empty_cache()`）单独释放、不影响 YOLO；app 退出时 `atexit` 注册关闭整个 Worker，防残留进程
+
 ### 环境要求
 
 | 格式 | 需要 | 体积 |
 |---|---|---|
 | `.pt` | `pip install torch ultralytics` | ~2.5 GB |
 | `.onnx` | `pip install onnxruntime` | ~30 MB |
+| SAM 2 | `pip install sam2`（需 torch ≥ 2.5.1 + torchvision） | ~230 MB（large） |
 
 ---
 
@@ -234,7 +257,7 @@ a.click();
 ## 待办 / 已知遗留
 
 - [ ] 批量识别全部图片（`POST /api/detect/batch` + 进度轮询）
-- [ ] 撤销/重做栈（工具栏 undo/redo 按钮目前是装饰）
+- [ ] SAM 2 增强：多 mask 候选选择 / 负点精修边界 / 框选区域分割 / 多边形轮廓落盘
 - [ ] 标注框的「双击改标签」「右键改类别」
 - [ ] 推理 Worker 目前只支持单张推理，后续可加 batch 接口
 - [ ] Material Symbols 字体（3.3MB）后续替换为子集 SVG，进一步缩短启动时间

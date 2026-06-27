@@ -12,6 +12,11 @@
 import json
 import os
 import platform
+
+# PyTorch/MKL 在 Windows + conda 环境常出现 OpenMP 运行时冲突（libiomp5md.dll 重复初始化），
+# 导致 import torch 时 OMP Error #15 直接 abort 进程。设此变量放行（须在任何 torch import 之前；
+# 同时会随 os.environ 传给 Worker 子进程）。
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import re
 import string
 
@@ -30,6 +35,21 @@ app.secret_key = "dev-secret-autolabels"
 
 # 启动时跑一次环境检测（结果缓存）
 _env_result = check_environment()
+
+# 从配置恢复推理 Worker：pythonPath 已持久化到 config.json，但 detector 的运行时状态
+# （_worker_python）是内存态，重启即丢。此处重建，使 YOLO/SAM 推理继续走外部 Worker
+# （Worker 子进程在首次推理时懒启动，此处不启动子进程，无开销）。
+_startup_cfg = read_config()
+_restored_python = _startup_cfg.get("pythonPath", "")
+if _restored_python and os.path.isfile(_restored_python):
+    try:
+        detector.configure_worker(_restored_python)
+    except Exception as _e:
+        print(f"⚠️ 恢复推理环境失败：{_e}")
+
+# app 退出时关闭 Worker 子进程，避免残留进程占用端口与显存
+import atexit
+atexit.register(detector._stop_worker)
 
 ALLOWED_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 THUMB_MAX_SIZE = 160  # 缩略图最长边（备用，当前不生成）
@@ -287,6 +307,9 @@ LOADED_MODEL = {"path": None, "name": None, "format": None, "loaded_at": None}
 
 MODEL_EXTENSIONS = {".pt", ".onnx"}
 
+# 当前已加载的 SAM 2 模型信息（独立于 YOLO 的 LOADED_MODEL，两者可并存）
+LOADED_SAM = {"variant": None, "loaded_at": None}
+
 
 @app.route("/api/model/load", methods=["POST"])
 def api_model_load():
@@ -415,6 +438,7 @@ def api_env_config_save():
                 "torch": info.get("torch"),
                 "ultralytics": info.get("ultralytics"),
                 "onnxruntime": info.get("onnxruntime"),
+                "sam2": info.get("sam2"),
             },
         })
     else:
@@ -470,6 +494,86 @@ def api_detect(image_name):
         "elapsed_ms": elapsed,
         "device": detector.device,
     })
+
+
+# ===================== SAM 2 分割（独立引擎，与 YOLO 并列） =====================
+
+@app.route("/api/sam/load", methods=["POST"])
+def api_sam_load():
+    """加载 SAM 2 分割模型。variant: large/base_plus/small/tiny；
+    checkpoint 可选本地 .pt（离线），留空则 from_pretrained 自动下载。"""
+    global LOADED_SAM
+    data = request.get_json(silent=True) or {}
+    variant = (data.get("variant") or "large").strip()
+    checkpoint = (data.get("checkpoint") or "").strip()
+    try:
+        detector.load_sam(variant, checkpoint)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"SAM 加载失败：{e}"}), 500
+
+    import datetime
+    LOADED_SAM = {
+        "variant": detector.sam_variant,
+        "loaded_at": datetime.datetime.now().isoformat(),
+    }
+    # 缓存变体到配置，下次启动可预填
+    cfg = read_config()
+    cfg["lastSamVariant"] = detector.sam_variant
+    write_config(cfg)
+    return jsonify({
+        "ok": True,
+        "variant": detector.sam_variant,
+        "device": detector.sam_device,
+    })
+
+
+@app.route("/api/sam/predict", methods=["POST"])
+def api_sam_predict():
+    """对当前项目图片用点提示做 SAM 2 分割，返回外接框（可能为 None）。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    if not detector.sam_is_loaded:
+        return jsonify({"ok": False, "error": "SAM 模型未加载，请先在侧栏加载"}), 400
+
+    data = request.get_json(silent=True) or {}
+    safe = os.path.basename(data.get("image_name", ""))  # 防路径穿越
+    img_path = os.path.join(_images_dir(), safe)
+    if not os.path.isfile(img_path):
+        return jsonify({"ok": False, "error": "图片不存在"}), 404
+
+    points = data.get("points", [])  # [[nx, ny], ...] 归一化 0~1
+    labels = data.get("labels", [1] * len(points))
+    if not points:
+        return jsonify({"ok": False, "error": "未提供分割点"}), 400
+
+    # 归一化点 → 像素坐标（坐标转换在后端做，沿用既有约定）
+    from PIL import Image
+    W, H = Image.open(img_path).size
+    px_points = [[float(x) * W, float(y) * H] for x, y in points]
+
+    try:
+        t0 = __import__("time").time()
+        box = detector.segment(img_path, px_points, labels)
+        elapsed = round((__import__("time").time() - t0) * 1000)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"分割失败：{e}"}), 500
+
+    return jsonify({
+        "ok": True,
+        "box": box,  # None 表示未分割出目标
+        "elapsed_ms": elapsed,
+        "device": detector.device,
+    })
+
+
+@app.route("/api/sam/unload", methods=["POST"])
+def api_sam_unload():
+    """卸载 SAM 模型，释放显存（不影响 YOLO）。"""
+    try:
+        detector.unload_sam()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"SAM 卸载失败：{e}"}), 500
+    return jsonify({"ok": True})
 
 
 @app.route("/api/project/open", methods=["POST"])
