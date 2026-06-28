@@ -33,6 +33,15 @@
         trEnvPythonInput: $("trEnvPythonInput"),
         trEnvSaveBtn: $("trEnvSaveBtn"),
         trEnvConfigError: $("trEnvConfigError"),
+        trPresetBtn: $("trPresetBtn"),
+        presetDialog: $("presetDialog"),
+        presetCloseBtn: $("presetCloseBtn"),
+        presetCancelBtn: $("presetCancelBtn"),
+        presetCardsBody: $("presetCardsBody"),
+        coreParamsDialog: $("coreParamsDialog"),
+        coreParamsBody: $("coreParamsBody"),
+        coreParamsNote: $("coreParamsNote"),
+        coreParamsCloseBtn: $("coreParamsCloseBtn"),
     };
 
     // 复用全局弹窗 API（image_list.js 暴露）
@@ -402,6 +411,177 @@
         }
     }
 
+    // ===================== 核心默认参数弹窗（只读查看） =====================
+    var coreParamsCache = {};     // 按预设 id 缓存参数数据（"" = 默认），避免重复请求
+    var presetsCache = null;      // 预设元数据列表缓存
+    var selectedPreset = null;    // 当前选中的预设 id
+
+    function escapeHtml(s) {
+        return String(s)
+            .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+
+    // 值渲染（仿参考截图）：布尔 → 彩色 Badge（True 蓝 / False 灰），数字 → 纯文字，字符串 → 加单引号
+    function renderCoreParamValue(value) {
+        var TEXT_CLS = "font-label-mono text-xs text-on-surface whitespace-nowrap";
+        if (value === true) {
+            return '<span class="inline-flex items-center px-sm py-[1px] rounded text-[11px] font-label-mono bg-primary text-on-primary">True</span>';
+        }
+        if (value === false) {
+            return '<span class="inline-flex items-center px-sm py-[1px] rounded text-[11px] font-label-mono bg-on-surface-variant text-surface-container-lowest">False</span>';
+        }
+        if (typeof value === "string") {
+            return '<span class="' + TEXT_CLS + '">&#39;' + escapeHtml(value) + '&#39;</span>';
+        }
+        return '<span class="' + TEXT_CLS + '">' + escapeHtml(String(value)) + '</span>';
+    }
+
+    function renderCoreParams(data) {
+        if (!els.coreParamsBody || !els.coreParamsNote) return;
+        els.coreParamsNote.textContent = data.basicNote || "";
+        var html = (data.groups || []).map(function (g, gi) {
+            var rows = (g.items || []).map(function (it) {
+                return '<div class="flex items-center justify-between gap-md px-md py-sm">'
+                    + '<div class="min-w-0">'
+                    + '<div class="font-label-mono text-xs text-on-surface-variant">' + escapeHtml(it.key) + '</div>'
+                    + '<div class="font-body-md text-[11px] text-outline leading-tight mt-[2px]">' + escapeHtml(it.note) + '</div>'
+                    + '</div>'
+                    + '<div class="flex-shrink-0">' + renderCoreParamValue(it.value) + '</div>'
+                    + '</div>';
+            }).join("");
+            return '<section class="rounded-lg border border-outline-variant bg-surface-container overflow-hidden">'
+                + '<header class="flex items-center gap-sm px-md py-sm border-b border-outline-variant">'
+                + '<span class="font-headline-sm text-primary font-bold w-5 text-center">' + (gi + 1) + '</span>'
+                + '<span class="font-label-caps text-on-surface font-semibold">' + escapeHtml(g.title) + '</span>'
+                + '</header>'
+                + '<div class="divide-y divide-outline-variant">' + rows + '</div>'
+                + '</section>';
+        }).join("");
+        els.coreParamsBody.innerHTML = html;
+    }
+
+    // ===================== 预设选择弹窗 =====================
+    function openPresetDialog() {
+        if (!els.presetDialog) return;
+        renderPresetCards();        // presetsCache 未就绪时显示加载骨架
+        els.presetDialog.classList.remove("hidden");
+        if (!presetsCache) loadPresets();
+    }
+
+    function closePresetDialog() {
+        if (els.presetDialog) els.presetDialog.classList.add("hidden");
+    }
+
+    async function loadPresets() {
+        try {
+            var resp = await fetch("/api/train/presets");
+            var data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "加载失败");
+            presetsCache = data.presets || [];
+            selectedPreset = data.selected || (presetsCache[0] && presetsCache[0].id) || "";
+            renderPresetCards();
+        } catch (e) {
+            if (typeof showToast === "function") showToast("加载预设失败：" + e.message);
+        }
+    }
+
+    function renderPresetCards() {
+        if (!els.presetCardsBody) return;
+        if (!presetsCache) {
+            els.presetCardsBody.innerHTML = '<div class="col-span-3 p-md text-center text-on-surface-variant font-label-mono text-xs">加载预设中…</div>';
+            return;
+        }
+        var html = presetsCache.map(function (p) {
+            var active = p.id === selectedPreset;
+            var tags = (p.tags || []).map(function (t) {
+                return '<span class="inline-block px-sm py-[1px] rounded-full bg-surface-variant text-on-surface-variant font-label-mono text-[10px]">' + escapeHtml(t) + '</span>';
+            }).join("");
+            var badge = p.recommended
+                ? '<span class="inline-flex items-center px-sm py-[1px] rounded text-[10px] font-label-caps bg-primary text-on-primary">推荐</span>'
+                : '';
+            return '<section class="rounded-lg border p-md flex flex-col gap-sm ' + (active ? "border-primary bg-primary/5" : "border-outline-variant bg-surface") + '" data-id="' + escapeHtml(p.id) + '">'
+                + '<div class="flex items-start justify-between gap-sm">'
+                + '<div class="flex items-center gap-sm min-w-0">'
+                + '<span class="material-symbols-outlined text-[20px] ' + (active ? "text-primary" : "text-on-surface-variant") + '">' + escapeHtml(p.icon || "tune") + '</span>'
+                + '<span class="font-headline-sm text-on-surface font-semibold truncate">' + escapeHtml(p.name) + '</span>'
+                + '</div>'
+                + badge
+                + '</div>'
+                + '<p class="font-body-md text-xs text-on-surface-variant leading-tight">' + escapeHtml(p.desc) + '</p>'
+                + '<div class="flex flex-wrap gap-xs">' + tags + '</div>'
+                + '<div class="flex gap-xs mt-auto pt-xs">'
+                + '<button type="button" class="preset-preview flex-1 flex items-center justify-center gap-xs px-sm py-sm rounded-lg border border-primary text-primary hover:bg-primary/10 font-label-caps text-label-caps transition-all" data-id="' + escapeHtml(p.id) + '">'
+                + '<span class="material-symbols-outlined text-[16px]">visibility</span>预览'
+                + '</button>'
+                + '<button type="button" class="preset-apply flex-1 flex items-center justify-center gap-xs px-sm py-sm rounded-lg font-label-caps text-label-caps transition-all ' + (active ? "bg-surface-variant text-on-surface-variant cursor-default" : "bg-primary text-on-primary hover:opacity-90") + '" data-id="' + escapeHtml(p.id) + '"' + (active ? " disabled" : "") + '>'
+                + '<span class="material-symbols-outlined text-[16px]">check</span>' + (active ? "已应用" : "应用预设")
+                + '</button>'
+                + '</div>'
+                + '</section>';
+        }).join("");
+        els.presetCardsBody.innerHTML = html;
+    }
+
+    async function applyPreset(presetId) {
+        var preset = null;
+        for (var i = 0; presetsCache && i < presetsCache.length; i++) {
+            if (presetsCache[i].id === presetId) { preset = presetsCache[i]; break; }
+        }
+        if (!preset) return;
+        var ok = await showConfirm({
+            title: "应用预设「" + preset.name + "」",
+            message: "将以此预设的超参数作为训练起点（学习率 / 数据增强 / 早停等），覆盖当前选择。右侧面板基础参数与自定义参数仍可进一步覆盖。",
+            okText: "应用",
+        });
+        if (!ok) return;
+        try {
+            var resp = await fetch("/api/train/preset/apply", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ preset: presetId }),
+            });
+            var data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "应用失败");
+            selectedPreset = data.selected;
+            coreParamsCache = {};   // 清空预览缓存，下次预览重新拉取
+            renderPresetCards();
+            if (typeof showToast === "function") showToast("已应用「" + preset.name + "」预设");
+        } catch (e) {
+            if (typeof showToast === "function") showToast("应用预设失败：" + e.message);
+        }
+    }
+
+    // ===================== 核心默认参数弹窗（只读查看 / 预览目标） =====================
+    async function openCoreParamsDialog(presetId) {
+        if (!els.coreParamsDialog) return;
+        var id = presetId || "";
+        if (!coreParamsCache[id]) {
+            try {
+                var url = "/api/train/core_params" + (id ? "?preset=" + encodeURIComponent(id) : "");
+                var resp = await fetch(url);
+                var data = await resp.json();
+                if (!resp.ok || !data.ok) throw new Error(data.error || "加载失败");
+                coreParamsCache[id] = data;
+            } catch (e) {
+                if (typeof showToast === "function") showToast("加载参数失败：" + e.message);
+                return;
+            }
+        }
+        var cached = coreParamsCache[id];
+        renderCoreParams(cached);
+        var titleEl = els.coreParamsDialog.querySelector("h3");
+        if (titleEl) titleEl.textContent = cached.presetName ? ("参数预览 · " + cached.presetName) : "训练核心默认参数";
+        els.coreParamsDialog.classList.remove("hidden");
+    }
+
+    function closeCoreParamsDialog() {
+        if (!els.coreParamsDialog) return;
+        els.coreParamsDialog.classList.add("hidden");
+        var titleEl = els.coreParamsDialog.querySelector("h3");
+        if (titleEl) titleEl.textContent = "训练核心默认参数";
+    }
+
     // ===================== 事件绑定 =====================
     function bind() {
         if (els.startBtn) els.startBtn.addEventListener("click", startTrain);
@@ -450,6 +630,44 @@
         window.addEventListener("stage-change", function (e) {
             var stage = e.detail && e.detail.stage;
             if (stage === "train") safeFit();
+        });
+
+        // 预设选择弹窗：入口 + 关闭（按钮 / 取消 / 遮罩 / Esc）+ 卡片事件委托（预览 / 应用）
+        if (els.trPresetBtn) els.trPresetBtn.addEventListener("click", openPresetDialog);
+        if (els.presetCloseBtn) els.presetCloseBtn.addEventListener("click", closePresetDialog);
+        if (els.presetCancelBtn) els.presetCancelBtn.addEventListener("click", closePresetDialog);
+        if (els.presetDialog) {
+            els.presetDialog.addEventListener("click", function (e) {
+                if (e.target === els.presetDialog) closePresetDialog();
+            });
+        }
+        if (els.presetCardsBody) {
+            els.presetCardsBody.addEventListener("click", function (e) {
+                var previewBtn = e.target.closest ? e.target.closest(".preset-preview") : null;
+                var applyBtn = e.target.closest ? e.target.closest(".preset-apply") : null;
+                if (previewBtn) {
+                    openCoreParamsDialog(previewBtn.getAttribute("data-id"));
+                } else if (applyBtn && !applyBtn.disabled) {
+                    applyPreset(applyBtn.getAttribute("data-id"));
+                }
+            });
+        }
+
+        // 核心默认参数弹窗（预览目标）：关闭按钮 / 遮罩
+        if (els.coreParamsCloseBtn) els.coreParamsCloseBtn.addEventListener("click", closeCoreParamsDialog);
+        if (els.coreParamsDialog) {
+            els.coreParamsDialog.addEventListener("click", function (e) {
+                if (e.target === els.coreParamsDialog) closeCoreParamsDialog();
+            });
+        }
+        // Esc：优先关上层 coreParamsDialog，其次 presetDialog
+        window.addEventListener("keydown", function (e) {
+            if (e.key !== "Escape") return;
+            if (els.coreParamsDialog && !els.coreParamsDialog.classList.contains("hidden")) {
+                closeCoreParamsDialog();
+            } else if (els.presetDialog && !els.presetDialog.classList.contains("hidden")) {
+                closePresetDialog();
+            }
         });
     }
 

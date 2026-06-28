@@ -179,17 +179,27 @@ def _probe_python(python_exe):
     """
     probe_code = """
 import sys, importlib.util, importlib.metadata, json
+
+# distribution 名与导入名不一致的包：onnxruntime-gpu 的导入名仍是 onnxruntime，
+# 直接 version("onnxruntime") 会抛 PackageNotFoundError，故按候选名遍历 distributions。
+_ALIASES = {'onnxruntime': {'onnxruntime', 'onnxruntime-gpu'}}
+
+def _version(pkg):
+    names = _ALIASES.get(pkg, {pkg})
+    try:
+        for d in importlib.metadata.distributions():
+            nm = d.metadata.get('Name')
+            if nm and nm in names:
+                return d.version
+    except Exception:
+        pass
+    return None
+
 result = {}
 for pkg in ['torch', 'ultralytics', 'onnxruntime', 'sam2']:
     try:
         spec = importlib.util.find_spec(pkg)
-        if spec is not None:
-            try:
-                result[pkg] = importlib.metadata.version(pkg)
-            except Exception:
-                result[pkg] = "installed"
-        else:
-            result[pkg] = None
+        result[pkg] = _version(pkg) if spec is not None else None
     except Exception:
         result[pkg] = None
 
@@ -248,10 +258,21 @@ print("PROBE_JSON:" + json.dumps(result))
 
 
 def _try_version(pkg):
+    """获取包版本用于环境详情展示。
+
+    兼容 distribution 名与导入名不一致的情况：onnxruntime-gpu 注册的包名是
+    onnxruntime-gpu，但导入名仍是 onnxruntime，直接 version("onnxruntime") 会抛
+    PackageNotFoundError。改用 distributions() 遍历按候选名匹配，全程不抛异常。
+    """
+    candidates = {pkg, "onnxruntime-gpu"} if pkg == "onnxruntime" else {pkg}
     try:
-        return importlib.metadata.version(pkg)
-    except (importlib.metadata.PackageNotFoundError, Exception):
-        return "已安装（版本未知）"
+        for dist in importlib.metadata.distributions():
+            name = dist.metadata.get("Name")
+            if name and name in candidates:
+                return dist.version
+    except Exception:
+        pass
+    return "已安装（版本未知）"
 
 
 # ===================== 配置文件 =====================

@@ -198,6 +198,7 @@ class TrainManager:
             "name": name,
             "exportOnnx": bool(params.get("exportOnnx", False)),
             "baseKwargs": base_kwargs,
+            "selectedPreset": params.get("selectedPreset", ""),
             "customParamsText": params.get("customParamsText", ""),
             "customParamsYaml": params.get("customParamsYaml", ""),
             "resultPath": result_path,

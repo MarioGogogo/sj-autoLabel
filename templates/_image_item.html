@@ -2,7 +2,8 @@
   单张图片卡片结构参考（前端 JS renderImageItem() 复刻同样结构）。
   首屏不再服务端渲染图片列表（改由打开项目后 JS 渲染）。
 
-  约定变量：img = { name(物理文件名, 唯一标识), url, status: 'pending'|'done', size }
+  约定变量：img = { name(物理文件名, 唯一标识), url, status: 'pending'|'negative'|'done', size }
+  （实际渲染由 image_list.js 的 renderImageItem() + applyItemStatus() 完成，本模板仅作结构参考）
 #}
 {% set is_done = img.status == 'done' %}
 <div class="img-item flex items-center gap-sm p-xs rounded transition-all group
@@ -27,4 +28,8 @@
     {% else %}
     <span class="material-symbols-outlined text-outline text-sm status-icon opacity-0 group-hover:opacity-100 transition-opacity">radio_button_unchecked</span>
     {% endif %}
+    <button type="button" title="删除图片"
+        class="img-del-btn flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100">
+        <span class="material-symbols-outlined text-[16px]">close</span>
+    </button>
 </div>

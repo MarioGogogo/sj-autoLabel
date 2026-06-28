@@ -15,6 +15,11 @@ import json
 import os
 import sys
 
+# 预设参数（lr0/优化器/数据增强/patience 等）。与 app.py 共享同一数据源，
+# 保证前端弹窗展示的 = 实际注入训练的。按选中预设取起点（兜底 CORE_DEFAULTS），
+# 优先级最低，可被 baseKwargs / 自定义框 / yaml 覆盖。
+from train_defaults import get_preset_params
+
 
 def _coerce(v):
     """把字符串值尝试转 bool/int/float/None/str（自定义参数 key=value 的值类型推断）。"""
@@ -100,8 +105,9 @@ def main(args):
         except Exception:
             pass
 
-    # 合并训练参数：基础控件 < 文本框 key=value < yaml 文件（后者覆盖前者同名键）
-    final = {}
+    # 合并训练参数：选中预设 < 基础控件 < 文本框 key=value < yaml 文件（后者覆盖前者同名键）
+    base = get_preset_params(args.get("selectedPreset", ""))
+    final = dict(base)
     final.update(args.get("baseKwargs", {}))
     final.update(parse_kv(args.get("customParamsText", "")))
     yaml_text = args.get("customParamsYaml", "") or ""

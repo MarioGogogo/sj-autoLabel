@@ -22,3 +22,6 @@ package-lock.json
 .DS_Store
 .vscode/
 .idea/
+
+# 模型权重（预训练/训练产物，体积大，不入仓库；按需单独下载）
+*.pt

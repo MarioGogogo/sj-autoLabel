@@ -96,6 +96,10 @@
                         class="px-sm py-sm border border-primary/40 text-primary hover:bg-primary/5 font-label-caps text-label-caps rounded-lg transition-all flex items-center justify-center">
                         <span class="material-symbols-outlined text-sm">drive_file_rename_outline</span>
                     </button>
+                    <button id="normalizeNegBtn" type="button" title="把 _bad 负样本标准化为空 txt（供 YOLO 训练）"
+                        class="px-sm py-sm border border-primary/40 text-primary hover:bg-primary/5 font-label-caps text-label-caps rounded-lg transition-all flex items-center justify-center">
+                        <span class="material-symbols-outlined text-sm">cleaning_services</span>
+                    </button>
                 </div>
             </div>
             <nav class="flex-1 overflow-y-auto custom-scrollbar">
@@ -274,6 +278,12 @@
                     class="ctx-item w-full flex items-center gap-sm px-md py-sm text-sm text-error hover:bg-error/10 transition-colors">
                     <span class="material-symbols-outlined text-[18px]">delete_sweep</span>
                     <span class="font-label-mono text-xs">清空所有标注框</span>
+                </button>
+                <button data-act="negative" type="button"
+                    class="ctx-item w-full flex items-center gap-sm px-md py-sm text-sm text-on-surface hover:bg-primary/10 transition-colors">
+                    <span class="material-symbols-outlined text-[18px]" style="color:#7c6ff0">image_not_supported</span>
+                    <span class="ctx-label font-label-mono text-xs">标记为负样本</span>
+                    <span class="ml-auto font-label-mono text-[10px] text-outline">N</span>
                 </button>
             </div>
             <!-- 添加新类别对话框 -->
@@ -481,9 +491,15 @@
                 </div>
                 <!-- 训练参数 -->
                 <div class="p-md border-b border-outline-variant">
-                    <h3 class="font-label-caps text-label-caps text-outline mb-md flex items-center gap-xs uppercase tracking-wider">
-                        <span class="material-symbols-outlined text-[14px]">tune</span> 训练参数
-                    </h3>
+                    <div class="flex items-center justify-between mb-md">
+                        <h3 class="font-label-caps text-label-caps text-outline flex items-center gap-xs uppercase tracking-wider">
+                            <span class="material-symbols-outlined text-[14px]">tune</span> 训练参数
+                        </h3>
+                        <button id="trPresetBtn" type="button" title="选择训练参数预设"
+                            class="flex items-center gap-xs text-primary hover:opacity-80 transition-opacity font-label-mono text-[10px]">
+                            <span class="material-symbols-outlined text-[14px]">dashboard</span>预设参数选择
+                        </button>
+                    </div>
                     <div class="space-y-md">
                         <div>
                             <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">基础模型</label>
@@ -649,6 +665,51 @@
                     class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
                 <button id="confirmOkBtn" type="button"
                     class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">确认</button>
+            </div>
+        </div>
+    </div>
+    <!-- 训练核心默认参数（只读查看，仿 confirmDialog 样式） -->
+    <div id="coreParamsDialog"
+        class="hidden fixed inset-0 z-[130] flex items-center justify-center p-md bg-on-surface/40 backdrop-blur-sm">
+        <div class="w-[600px] max-w-[94vw] max-h-[calc(100vh-2rem)] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+            <div class="flex items-center gap-sm px-md py-sm border-b border-outline-variant">
+                <span class="material-symbols-outlined text-primary">tune</span>
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex-1">训练核心默认参数</h3>
+                <button id="coreParamsCloseBtn" type="button" title="关闭"
+                    class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                    <span class="material-symbols-outlined text-[20px]">close</span>
+                </button>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-md">
+                <p id="coreParamsNote" class="font-body-md text-xs text-on-surface-variant mb-sm"></p>
+                <div id="coreParamsBody" class="space-y-sm"></div>
+            </div>
+        </div>
+    </div>
+    <!-- 训练参数预设选择（三段式：标题栏 + 预设卡片 + 底部提示/取消） -->
+    <div id="presetDialog"
+        class="hidden fixed inset-0 z-[130] flex items-center justify-center p-md bg-on-surface/40 backdrop-blur-sm">
+        <div class="w-[860px] max-w-[96vw] max-h-[calc(100vh-2rem)] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+            <div class="flex items-center gap-sm px-md py-sm border-b border-outline-variant">
+                <span class="material-symbols-outlined text-primary">tune</span>
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex-1">选择训练参数预设</h3>
+                <button id="presetCloseBtn" type="button" title="关闭"
+                    class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                    <span class="material-symbols-outlined text-[20px]">close</span>
+                </button>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-md">
+                <div id="presetCardsBody" class="grid grid-cols-3 gap-md"></div>
+            </div>
+            <div class="flex items-center justify-between gap-md px-md py-sm border-t border-outline-variant">
+                <div class="flex items-center gap-xs min-w-0">
+                    <span class="material-symbols-outlined text-[16px] text-primary flex-shrink-0">info</span>
+                    <span class="font-body-md text-xs text-on-surface-variant">选择预设将覆盖当前训练超参数（学习率 / 数据增强 / 早停等），应用前请确认数据集与标签一致。</span>
+                </div>
+                <button id="presetCancelBtn" type="button"
+                    class="flex-shrink-0 px-md py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">
+                    取消
+                </button>
             </div>
         </div>
     </div>

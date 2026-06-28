@@ -2,8 +2,9 @@
  * 图片列表：导入、渲染、状态标注、计数。
  *
  * 状态语义：
- *   pending  待处理（导入默认）
- *   done     已处理（后续接入模型检测后更新）
+ *   pending  待处理（导入默认，无 txt）
+ *   negative 负样本（空 txt = YOLO 背景图，明确无目标）
+ *   done     已处理（有非空标注）
  */
 (function () {
     "use strict";
@@ -50,6 +51,7 @@
     const refreshTopBtn = document.getElementById("refreshTopBtn");
     const openProjectBtn = document.getElementById("openProjectBtn");
     const openProjectTopBtn = document.getElementById("openProjectTopBtn");
+    const normalizeNegBtn = document.getElementById("normalizeNegBtn");
     const browseDialog = document.getElementById("browseDialog");
     const browseCurrentPath = document.getElementById("browseCurrentPath");
     const browseUpBtn = document.getElementById("browseUpBtn");
@@ -979,6 +981,7 @@
             if (!menuEl) return;
 
             e.preventDefault();
+            if (scope === "canvas") updateNegativeMenuItem(); // 按当前图状态切换「负样本」项文案
             showCtxMenu(menuEl, e.clientX, e.clientY);
         });
 
@@ -1000,6 +1003,7 @@
                 else if (act === "delete") deleteSelectedBox();
                 else if (act === "reset") resetView();
                 else if (act === "clearBoxes") clearAllBoxes();
+                else if (act === "negative") toggleNegative();
             });
         }
     }
@@ -1038,6 +1042,9 @@
             } else if (e.key === "s" || e.key === "S") {
                 // S：切换 SAM 点击分割。
                 e.preventDefault(); setSamMode(!samMode);
+            } else if (e.key === "n" || e.key === "N") {
+                // N：切换当前图为「负样本」标记。
+                e.preventDefault(); toggleNegative();
             } else if (e.key === "Escape") {
                 // Esc：关闭对话框 / 退出绘制模式 / 取消选中 / 关闭右键菜单。
                 if (confirmDialog && !confirmDialog.classList.contains("hidden")) {
@@ -1071,48 +1078,272 @@
         return (bytes / 1024 / 1024).toFixed(2) + " MB";
     }
 
+    // 三态视觉配置：pending 待处理（灰）/ negative 负样本（紫）/ done 已处理（绿）。
+    // negative 用内联 hex（见 applyItemStatus），其余走 Tailwind class。
+    const STATUS_THEMES = {
+        pending: {
+            state: "hover:bg-surface-variant cursor-pointer",
+            thumb: "opacity-70 group-hover:opacity-100",
+            name: "text-on-surface-variant group-hover:text-primary",
+            statusText: "待处理", statusClass: "text-outline", statusColor: "",
+            icon: "radio_button_unchecked",
+            iconClass: "text-outline opacity-0 group-hover:opacity-100 transition-opacity", iconColor: "",
+        },
+        negative: {
+            state: "cursor-pointer",
+            thumb: "opacity-70 group-hover:opacity-100",
+            name: "text-on-surface-variant group-hover:text-primary",
+            statusText: "负样本", statusClass: "", statusColor: "#7c6ff0",
+            icon: "image_not_supported", iconClass: "", iconColor: "#7c6ff0",
+        },
+        done: {
+            state: "bg-surface-container-highest border border-primary/30",
+            thumb: "",
+            name: "text-primary",
+            statusText: "已处理", statusClass: "text-on-surface-variant", statusColor: "",
+            icon: "check_circle", iconClass: "text-primary", iconColor: "",
+        },
+    };
+
     /**
-     * 生成单张图片卡片节点（与服务端 _image_item.html 结构保持一致）。
+     * 统一应用图片卡片的「状态视觉」。可重复调用：每次全量覆盖目标态的 class/style，
+     * 并从 dataset.size 重算大小提示。renderImageItem 初始化、保存后状态更新、
+     * 标记/取消负样本都走这里，避免分散的 classList 操作。
+     */
+    function applyItemStatus(node, status) {
+        if (!node) return;
+        const t = STATUS_THEMES[status] || STATUS_THEMES.pending;
+        node.dataset.status = status;
+
+        // 卡片整体：状态 class 全量覆盖；negative 额外用内联淡紫底 + 紫色左边线。
+        node.className = `img-item flex items-center gap-sm p-xs rounded transition-all group ${t.state}`;
+        if (status === "negative") {
+            node.style.backgroundColor = "rgba(124,111,240,0.07)";
+            node.style.borderLeft = "2px solid #7c6ff0";
+        } else {
+            node.style.backgroundColor = "";
+            node.style.borderLeft = "";
+        }
+
+        const thumb = node.querySelector(".w-10.h-10");
+        if (thumb) thumb.className = `w-10 h-10 rounded overflow-hidden flex-shrink-0 ${t.thumb}`;
+
+        const nameEl = node.querySelector("p.truncate");
+        if (nameEl) nameEl.className = `truncate text-xs font-label-mono ${t.name}`;
+
+        const sizeTip = node.dataset.size ? ` · ${formatSize(Number(node.dataset.size))}` : "";
+        const statusEl = node.querySelector(".img-status");
+        if (statusEl) {
+            statusEl.className = `img-status text-[10px] ${t.statusClass}`;
+            statusEl.style.color = t.statusColor;
+            statusEl.textContent = t.statusText + sizeTip;
+        }
+
+        const icon = node.querySelector(".status-icon");
+        if (icon) {
+            icon.className = `material-symbols-outlined text-sm status-icon ${t.iconClass}`;
+            icon.style.color = t.iconColor;
+            icon.textContent = t.icon;
+        }
+    }
+
+    /**
+     * 渲染单张图片卡片（结构 + 交由 applyItemStatus 上状态视觉）。
      * @param {Object} img { name, url, status, size }
      */
     function renderImageItem(img) {
-        const isDone = img.status === "done";
         const item = document.createElement("div");
-        // 与模板 class 完全对齐。
-        const baseClass = "img-item flex items-center gap-sm p-xs rounded transition-all group";
-        const stateClass = isDone
-            ? "bg-surface-container-highest border border-primary/30"
-            : "hover:bg-surface-variant cursor-pointer";
-        item.className = `${baseClass} ${stateClass}`;
         item.dataset.name = img.name;
-        item.dataset.status = img.status;
-
-        const thumbOpacity = isDone ? "" : "opacity-70 group-hover:opacity-100";
-        const nameColor = isDone
-            ? "text-primary"
-            : "text-on-surface-variant group-hover:text-primary";
-        const statusColor = isDone ? "text-on-surface-variant" : "text-outline";
-        const statusText = isDone ? "已处理" : "待处理";
-
-        const icon = isDone
-            ? `<span class="material-symbols-outlined text-primary text-sm status-icon">check_circle</span>`
-            : `<span class="material-symbols-outlined text-outline text-sm status-icon opacity-0 group-hover:opacity-100 transition-opacity">radio_button_unchecked</span>`;
-
-        const sizeTip = img.size ? ` · ${formatSize(img.size)}` : "";
+        item.dataset.size = img.size || ""; // 供 applyItemStatus 重算大小提示
         const thumbSrc = img.thumb_url || img.url;
 
         item.innerHTML = `
-            <div class="w-10 h-10 rounded overflow-hidden flex-shrink-0 ${thumbOpacity}">
+            <div class="w-10 h-10 rounded overflow-hidden flex-shrink-0">
                 <img class="w-full h-full object-cover" loading="lazy" decoding="async"
                     src="${thumbSrc}" alt="${img.name}" />
             </div>
             <div class="flex-1 min-w-0">
-                <p class="truncate text-xs font-label-mono ${nameColor}">${img.name}</p>
-                <p class="img-status text-[10px] ${statusColor}">${statusText}${sizeTip}</p>
+                <p class="truncate text-xs font-label-mono">${img.name}</p>
+                <p class="img-status text-[10px]"></p>
             </div>
-            ${icon}
+            <span class="material-symbols-outlined text-sm status-icon"></span>
+            <button type="button" title="删除图片"
+                class="img-del-btn flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100">
+                <span class="material-symbols-outlined text-[16px]">close</span>
+            </button>
         `;
+        applyItemStatus(item, img.status);
         return item;
+    }
+
+    /**
+     * 删除单张图片（走后端）。联动删除原图 + 同名标注 txt + 缩略图；
+     * 删除当前选中图则切到相邻图，列表空则回到画布空状态。
+     * @param {string} name 图片文件名
+     * @returns {boolean} 是否成功删除
+     */
+    async function deleteImage(name) {
+        const node = imageList.querySelector(`.img-item[data-name="${CSS.escape(name)}"]`);
+        if (!node) return false;
+        const hasLabel = node.dataset.status !== "pending";
+        const ok = await showConfirm({
+            title: "删除图片",
+            message: hasLabel
+                ? `确定删除图片「${name}」吗？其标注文件将一并删除，此操作不可撤销。`
+                : `确定删除图片「${name}」吗？此操作不可撤销。`,
+            okText: "删除",
+            danger: true,
+        });
+        if (!ok) return false;
+
+        const wasSelected = selectedName === name;
+        // 删除前先取好相邻图（删除后 DOM 变化），优先后一张。
+        const nextName = wasSelected ? (neighborName(1) || neighborName(-1)) : null;
+        // 若该图正等待保存，取消挂起的保存（避免删后 PUT 已不存在的图）。
+        if (pendingSaveName === name) { clearTimeout(saveTimer); pendingSaveName = null; }
+
+        try {
+            const resp = await fetch(`/api/project/image/${encodeURIComponent(name)}`, { method: "DELETE" });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) { showToast(data.error || "删除失败"); return false; }
+        } catch (e) {
+            showToast("删除失败：" + e.message);
+            return false;
+        }
+
+        // 清理前端缓存：DOM 节点 + 撤销/重做栈 + 检测去重缓存。
+        node.remove();
+        undoStack.delete(name);
+        redoStack.delete(name);
+        for (const key of [...detectedCache]) {
+            if (key.startsWith(name + "@")) detectedCache.delete(key);
+        }
+        // 刷新计数；删了带标注的图才需重拉类别统计。
+        updateProgress();
+        refreshMeta(imageList.querySelectorAll(".img-item").length);
+        if (hasLabel) fetchStats();
+
+        if (wasSelected) {
+            if (nextName) {
+                selectByName(nextName);
+            } else {
+                // 列表空 → 回到画布空状态。
+                selectedName = null;
+                selectedBoxId = null;
+                currentBoxes = [];
+                renderBoxes();
+                if (canvasEmpty) canvasEmpty.classList.remove("hidden");
+                if (canvasArea) canvasArea.classList.add("hidden");
+            }
+        }
+        showToast(`已删除「${name}」`);
+        return true;
+    }
+
+    /** 刷新画布右键菜单「负样本」项的文案/图标（按当前选中图状态）。 */
+    function updateNegativeMenuItem() {
+        if (!ctxMenu) return;
+        const btn = ctxMenu.querySelector('[data-act="negative"]');
+        if (!btn) return;
+        const node = selectedName && imageList.querySelector(`.img-item[data-name="${CSS.escape(selectedName)}"]`);
+        const isNegative = !!(node && node.dataset.status === "negative");
+        const label = btn.querySelector(".ctx-label");
+        const icon = btn.querySelector("span.material-symbols-outlined");
+        if (label) label.textContent = isNegative ? "取消负样本标记" : "标记为负样本";
+        if (icon) icon.textContent = isNegative ? "undo" : "image_not_supported";
+    }
+
+    /**
+     * 切换当前选中图的「负样本」标记。
+     * 非负样本 → 写空 txt + 清空画布框；负样本 → 删空 txt 回待处理。
+     */
+    async function toggleNegative() {
+        if (!selectedName) return;
+        const node = imageList.querySelector(`.img-item[data-name="${CSS.escape(selectedName)}"]`);
+        if (!node) return;
+        const isNegative = node.dataset.status === "negative";
+
+        // 从非负样本标记时，若已有标注框，先确认清空（避免误丢标注）。
+        if (!isNegative && currentBoxes.length > 0) {
+            const ok = await showConfirm({
+                title: "标记为负样本",
+                message: "标记为负样本将清空当前所有标注框，确定？",
+                okText: "标记负样本",
+                danger: true,
+            });
+            if (!ok) return;
+        }
+
+        try {
+            const resp = await fetch(`/api/labels/${encodeURIComponent(selectedName)}/negative`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ negative: !isNegative }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) {
+                showNotification({ type: "error", title: "操作失败", message: data.error || "" });
+                return;
+            }
+            if (!isNegative) {
+                // 标记为负样本：清空画布框 + 重建撤销栈。
+                currentBoxes = [];
+                selectedBoxId = null;
+                renderBoxes();
+                resetHistoryForCurrent();
+                applyItemStatus(node, "negative");
+                if (node._img) node._img.status = "negative";
+            } else {
+                applyItemStatus(node, "pending");
+                if (node._img) node._img.status = "pending";
+            }
+            // 清掉挂起的保存，避免随后误存空标注把负样本空 txt 删掉。
+            pendingSaveName = null;
+            clearTimeout(saveTimer);
+            updateProgress();
+            fetchStats();
+            updateNegativeMenuItem();
+        } catch (e) {
+            showNotification({ type: "error", title: "操作失败", message: e.message || "" });
+        }
+    }
+
+    /**
+     * 批量标准化负样本：把所有 _bad.txt 标记转为空 <stem>.txt（YOLO 负样本）并删除 _bad.txt。
+     * 用于导入带 _bad 约定的外部数据集后，让负样本真正参与 YOLO 训练（否则 YOLO 会忽略它们）。
+     */
+    async function normalizeNegatives() {
+        const ok = await showConfirm({
+            title: "标准化负样本",
+            message: "将把所有 _bad 标记的负样本转为标准空 txt（供 YOLO 训练当背景图），并删除 _bad 文件。已标注的图不受影响。确定？",
+            okText: "标准化",
+        });
+        if (!ok) return;
+        try {
+            const resp = await fetch("/api/project/normalize_negatives", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) {
+                showNotification({ type: "error", title: "标准化失败", message: data.error || "" });
+                return;
+            }
+            const normalized = data.normalized || 0;
+            const cleaned = data.cleaned || 0;
+            if (cleaned === 0) {
+                showToast("没有需要标准化的 _bad 负样本");
+            } else {
+                showNotification({
+                    type: "success",
+                    title: "标准化完成",
+                    message: `已转换 ${normalized} 张为空 txt，清理 ${cleaned} 个 _bad 文件`,
+                });
+            }
+            fetchStats();
+        } catch (e) {
+            showNotification({ type: "error", title: "标准化失败", message: e.message || "" });
+        }
     }
 
     /**
@@ -1212,55 +1443,11 @@
                 const node = imageList.querySelector(`.img-item[data-name="${CSS.escape(selectedName)}"]`);
                 if (node) {
                     if (n > 0 && node.dataset.status !== "done") {
-                        node.dataset.status = "done";
-                        node.classList.remove("hover:bg-surface-variant", "cursor-pointer");
-                        node.classList.add("bg-surface-container-highest", "border", "border-primary/30");
-                        const thumb = node.querySelector(".w-10.h-10");
-                        if (thumb) { thumb.classList.remove("opacity-70", "group-hover:opacity-100"); }
-                        const nameEl = node.querySelector("p.truncate");
-                        if (nameEl) {
-                            nameEl.classList.remove("text-on-surface-variant", "group-hover:text-primary");
-                            nameEl.classList.add("text-primary");
-                        }
-                        const statusEl = node.querySelector(".img-status");
-                        if (statusEl) {
-                            statusEl.classList.remove("text-outline");
-                            statusEl.classList.add("text-on-surface-variant");
-                            const sizeTip = statusEl.textContent.match(/·.*$/);
-                            statusEl.textContent = "已处理" + (sizeTip ? sizeTip[0] : "");
-                        }
-                        const icon = node.querySelector(".status-icon");
-                        if (icon) {
-                            icon.textContent = "check_circle";
-                            icon.classList.remove("text-outline", "opacity-0", "group-hover:opacity-100", "transition-opacity");
-                            icon.classList.add("text-primary");
-                        }
+                        applyItemStatus(node, "done");
                         if (node._img) node._img.status = "done";
                     } else if (n === 0 && node.dataset.status !== "pending") {
                         // 框全删了 → 回退为「待处理」。
-                        node.dataset.status = "pending";
-                        node.classList.add("hover:bg-surface-variant", "cursor-pointer");
-                        node.classList.remove("bg-surface-container-highest", "border", "border-primary/30");
-                        const thumb = node.querySelector(".w-10.h-10");
-                        if (thumb) { thumb.classList.add("opacity-70", "group-hover:opacity-100"); }
-                        const nameEl = node.querySelector("p.truncate");
-                        if (nameEl) {
-                            nameEl.classList.add("text-on-surface-variant", "group-hover:text-primary");
-                            nameEl.classList.remove("text-primary");
-                        }
-                        const statusEl = node.querySelector(".img-status");
-                        if (statusEl) {
-                            statusEl.classList.add("text-outline");
-                            statusEl.classList.remove("text-on-surface-variant");
-                            const sizeTip = statusEl.textContent.match(/·.*$/);
-                            statusEl.textContent = "待处理" + (sizeTip ? sizeTip[0] : "");
-                        }
-                        const icon = node.querySelector(".status-icon");
-                        if (icon) {
-                            icon.textContent = "radio_button_unchecked";
-                            icon.classList.add("text-outline", "opacity-0", "group-hover:opacity-100", "transition-opacity");
-                            icon.classList.remove("text-primary");
-                        }
+                        applyItemStatus(node, "pending");
                         if (node._img) node._img.status = "pending";
                     }
                     updateProgress();
@@ -1298,7 +1485,7 @@
     function refreshMeta(total) {
         if (imageCount) {
             const items = imageList.querySelectorAll(".img-item");
-            const done = Array.from(items).filter((n) => n.dataset.status === "done").length;
+            const done = Array.from(items).filter((n) => n.dataset.status === "done" || n.dataset.status === "negative").length;
             imageCount.textContent = `已处理 ${total ? done : 0} / ${total || 0}`;
         }
         if (emptyHint) emptyHint.classList.toggle("hidden", total > 0);
@@ -1309,7 +1496,7 @@
         if (!canvasProgress) return;
         const items = imageList.querySelectorAll(".img-item");
         const total = items.length;
-        const done = Array.from(items).filter((n) => n.dataset.status === "done").length;
+        const done = Array.from(items).filter((n) => n.dataset.status === "done" || n.dataset.status === "negative").length;
         const pending = total - done;
         canvasProgress.textContent = total
             ? `已处理 ${done} / ${total} 张 · 未处理 ${pending} 张`
@@ -1857,6 +2044,9 @@
         if (refreshBtn) refreshBtn.addEventListener("click", refreshProject);
         if (refreshTopBtn) refreshTopBtn.addEventListener("click", refreshProject);
 
+        // 标准化 _bad 负样本（_bad.txt → 空 txt，供 YOLO 训练）。
+        if (normalizeNegBtn) normalizeNegBtn.addEventListener("click", normalizeNegatives);
+
         // 目录浏览对话框：返回上级。
         if (browseUpBtn) browseUpBtn.addEventListener("click", () => loadBrowseDir(browseParentPath || ""));
         if (browseSelectBtn) browseSelectBtn.addEventListener("click", selectBrowseDir);
@@ -1922,6 +2112,14 @@
 
         // 事件委托：点击任意列表项即选中并在中间展示。
         imageList.addEventListener("click", (e) => {
+            // 删除按钮：阻止冒泡，不触发选中。
+            const delBtn = e.target.closest(".img-del-btn");
+            if (delBtn) {
+                e.stopPropagation();
+                const item = delBtn.closest(".img-item");
+                if (item) deleteImage(item.dataset.name);
+                return;
+            }
             const item = e.target.closest(".img-item");
             if (item) selectByName(item.dataset.name);
         });

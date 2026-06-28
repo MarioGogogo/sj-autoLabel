@@ -34,6 +34,16 @@ from flask import (
 import threading
 from detector import check_environment, detector, read_config, write_config
 from train_manager import train_manager
+from train_defaults import (
+    CORE_DEFAULTS,
+    CORE_PARAM_GROUPS,
+    BASIC_PARAM_HINT,
+    COVERAGE_NOTE,
+    PRESETS,
+    DEFAULT_PRESET_ID,
+    get_preset_params,
+    get_preset_meta,
+)
 
 app = Flask(__name__)
 app.secret_key = "dev-secret-autolabels"
@@ -166,6 +176,18 @@ def _label_txt_path(image_name):
     return os.path.join(_labels_dir(), _safe_label_stem(image_name) + ".txt")
 
 
+def _is_empty_label(txt_path):
+    """标注 txt 是否为「空」（0 字节或仅含空白/换行）→ 负样本（背景图）。
+
+    与 Ultralytics YOLO 一致：空 txt 视为负样本，用于降低误检。
+    """
+    try:
+        with open(txt_path, "r", encoding="utf-8") as f:
+            return f.read().strip() == ""
+    except OSError:
+        return False
+
+
 def _clamp01(v):
     return max(0.0, min(1.0, v))
 
@@ -189,28 +211,45 @@ def _make_thumbnail(src_path, dst_path):
         return False
 
 
+def _natural_key(name):
+    """文件名自然排序 key：数字段按数值比较，使 yls9 < yls89 < yls100。
+
+    re.split(r'(\\d+)', s) 产出「非数字/数字」交替分段，奇偶索引类型一致，
+    int 与 str 不会跨界比较报错。
+    """
+    return [int(part) if part.isdigit() else part.lower()
+            for part in re.split(r'(\d+)', name)]
+
+
 def _scan_images():
     """扫描 images/ 生成图片清单。record = {name, has_label, status, url, size}。"""
     images = []
     img_dir = _images_dir()
     if not os.path.isdir(img_dir):
         return images
-    for name in sorted(os.listdir(img_dir)):
+    for name in sorted(os.listdir(img_dir), key=_natural_key):
         if os.path.splitext(name)[1].lower() not in ALLOWED_EXT:
             continue
         full = os.path.join(img_dir, name)
         if not os.path.isfile(full):
             continue
         stem = _safe_label_stem(name)
-        has_label = os.path.exists(os.path.join(_labels_dir(), stem + ".txt"))
+        txt_path = os.path.join(_labels_dir(), stem + ".txt")
+        bad_path = os.path.join(_labels_dir(), stem + "_bad.txt")  # 外部数据集负样本标记（如 zdhz1_bad.txt）
+        if os.path.exists(txt_path) and not _is_empty_label(txt_path):
+            status = "done"          # 非空标注优先
+        elif os.path.exists(txt_path) or os.path.exists(bad_path):
+            status = "negative"      # 空 txt 或存在 __bad 标记 → 负样本
+        else:
+            status = "pending"
         try:
             size = os.path.getsize(full)
         except OSError:
             size = 0
         images.append({
             "name": name,
-            "has_label": has_label,
-            "status": "done" if has_label else "pending",
+            "has_label": status != "pending",
+            "status": status,
             "url": f"/api/project/image/{name}",
             "thumb_url": f"/api/project/thumb/{name}",
             "size": size,
@@ -284,7 +323,7 @@ def api_browse():
     if file_exts:
         allowed_files = {e.strip().lower() for e in file_exts.split(",") if e.strip()}
     try:
-        for name in sorted(os.listdir(current)):
+        for name in sorted(os.listdir(current), key=_natural_key):
             full = os.path.join(current, name)
             if os.path.isdir(full):
                 dirs.append({"name": name, "path": full})
@@ -667,6 +706,31 @@ def api_project_image(filename):
     return send_from_directory(img_dir, safe)
 
 
+@app.route("/api/project/image/<path:filename>", methods=["DELETE"])
+def api_project_delete_image(filename):
+    """删除单张图片，联动删除同名标注 txt 与缩略图。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    safe = os.path.basename(filename)  # 防穿越（沿用全局约定）
+    img_path = os.path.join(_images_dir(), safe)
+    if not os.path.isfile(img_path):
+        return jsonify({"ok": False, "error": "图片不存在"}), 404
+
+    # 标注复用 _label_txt_path（与扫描/保存的判定一致）；缩略图命名参考 api_project_thumb。
+    label_path = _label_txt_path(safe)
+    thumb_path = os.path.join(_thumbs_dir(), os.path.splitext(safe)[0] + ".jpg")
+
+    removed_label = os.path.isfile(label_path)
+    # 统一删除模式：先 exists 再 remove，try/except OSError 兜底（沿用既有模式）。
+    for path in (img_path, label_path, thumb_path):
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except OSError:
+            pass
+    return jsonify({"ok": True, "name": safe, "removed_label": removed_label})
+
+
 @app.route("/api/project/thumb/<path:filename>")
 def api_project_thumb(filename):
     """按文件名返回缩略图（160px 最长边，按需生成并缓存到 .thumbnails/）。"""
@@ -895,11 +959,144 @@ def api_load_labels(image_name):
     return jsonify({"ok": True, "boxes": boxes})
 
 
+@app.route("/api/labels/<path:image_name>/negative", methods=["POST"])
+def api_toggle_negative(image_name):
+    """切换某图为「负样本」标记（YOLO 背景图）。
+
+    body: {negative: true|false}
+      true  → 写空 txt（0 字节），标记为负样本。
+      false → 删除空 txt，回退为待处理（pending）。
+
+    保护：标记负样本时若 txt 已有非空标注，返回 409，避免误覆盖。
+    """
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    txt_path = _label_txt_path(image_name)
+    data = request.get_json(silent=True) or {}
+    negative = bool(data.get("negative"))
+
+    if negative:
+        if os.path.exists(txt_path) and not _is_empty_label(txt_path):
+            return jsonify({"ok": False, "error": "该图已有标注，请先清空标注框"}), 409
+        # 写真正的空文件（0 字节）。labels/ 在打开项目时已 makedirs。
+        with open(txt_path, "w", encoding="utf-8"):
+            pass
+        return jsonify({"ok": True, "negative": True})
+    else:
+        # 仅删除「空」txt（负样本）；非空 txt 不动，避免误删真实标注。
+        if os.path.exists(txt_path) and _is_empty_label(txt_path):
+            try:
+                os.remove(txt_path)
+            except OSError:
+                pass
+        return jsonify({"ok": True, "negative": False})
+
+
+@app.route("/api/project/normalize_negatives", methods=["POST"])
+def api_normalize_negatives():
+    """把所有 <stem>_bad.txt 标记标准化为空 <stem>.txt（YOLO 负样本），并删除 _bad.txt。
+
+    YOLO 训练只认 <stem>.txt，纯 _bad.txt 的图会被忽略。本端点把它们落成空 txt：
+      - 无 txt / 空 txt：写空 txt（变标准负样本）+ 删 _bad.txt
+      - 已有非空标注：视为误标，仅删 _bad.txt（保留真实标注）
+    返回 {ok, normalized, cleaned}。
+    """
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    labels_dir = _labels_dir()
+    normalized = 0  # 落成空 txt 的数量
+    cleaned = 0     # 删除的 _bad.txt 总数
+    if os.path.isdir(labels_dir):
+        for fn in os.listdir(labels_dir):
+            if not fn.endswith("_bad.txt"):
+                continue
+            stem = fn[:-len("_bad.txt")]
+            if not stem:
+                continue
+            bad_path = os.path.join(labels_dir, fn)
+            txt_path = os.path.join(labels_dir, stem + ".txt")
+            try:
+                if os.path.exists(txt_path) and not _is_empty_label(txt_path):
+                    pass  # 已有真实标注：_bad 为误标，仅清理
+                else:
+                    with open(txt_path, "w", encoding="utf-8"):  # 写空 txt → 标准负样本
+                        pass
+                    normalized += 1
+                os.remove(bad_path)
+                cleaned += 1
+            except OSError:
+                pass
+    return jsonify({"ok": True, "normalized": normalized, "cleaned": cleaned})
+
+
 # ===================== 模型训练 =====================
 
 # 训练环境扫描缓存 + 锁（懒加载：首次进训练页时同步扫描，后续缓存秒开）
 _TRAIN_ENV_CACHE = None
 _TRAIN_ENV_LOCK = threading.Lock()
+
+
+@app.route("/api/train/presets")
+def api_train_presets():
+    """返回预设方案元数据列表 + 当前选中预设 id（不暴露 params 全量）。"""
+    cfg = read_config()
+    selected = cfg.get("selectedPreset", DEFAULT_PRESET_ID)
+    presets_meta = [
+        {
+            "id": p["id"],
+            "name": p["name"],
+            "recommended": p.get("recommended", False),
+            "icon": p.get("icon", ""),
+            "desc": p["desc"],
+            "tags": p["tags"],
+        }
+        for p in PRESETS
+    ]
+    return jsonify({"ok": True, "presets": presets_meta, "selected": selected})
+
+
+@app.route("/api/train/preset/apply", methods=["POST"])
+def api_train_preset_apply():
+    """应用预设：校验 id 合法 → 写入 config.selectedPreset 持久化。"""
+    data = request.get_json(silent=True) or {}
+    preset_id = (data.get("preset") or "").strip()
+    if not get_preset_meta(preset_id):
+        return jsonify({"ok": False, "error": "未知预设"}), 400
+    cfg = read_config()
+    cfg["selectedPreset"] = preset_id
+    write_config(cfg)
+    return jsonify({"ok": True, "selected": preset_id})
+
+
+@app.route("/api/train/core_params")
+def api_train_core_params():
+    """返回参数分组（分组结构固定 + 注释），供前端只读弹窗展示。
+
+    传 ?preset=<id> 时按该预设的 params 填 value（供「预览」）；不传则用 CORE_DEFAULTS。
+    与 train_runner.py 实际注入训练的参数同源，保证「看到的 = 实际跑的」。
+    """
+    preset_id = (request.args.get("preset") or "").strip()
+    if preset_id:
+        params = get_preset_params(preset_id)
+        preset_name = (get_preset_meta(preset_id) or {}).get("name", "")
+    else:
+        params = CORE_DEFAULTS
+        preset_name = ""
+    groups = []
+    for g in CORE_PARAM_GROUPS:
+        groups.append({
+            "title": g["title"],
+            "items": [
+                {"key": it["key"], "value": params.get(it["key"]), "note": it["note"]}
+                for it in g["items"]
+            ],
+        })
+    return jsonify({
+        "ok": True,
+        "groups": groups,
+        "presetName": preset_name,
+        "basicNote": BASIC_PARAM_HINT + COVERAGE_NOTE,
+    })
 
 
 @app.route("/api/train/env")
@@ -1031,6 +1228,7 @@ def api_train_start():
         "name": name,
         "valRatio": val_ratio,
         "exportOnnx": export_onnx,
+        "selectedPreset": cfg.get("selectedPreset") or DEFAULT_PRESET_ID,
         "customParamsText": str(data.get("customParamsText") or ""),
         "customParamsYaml": str(data.get("customParamsYaml") or ""),
     }
@@ -1164,6 +1362,12 @@ def _run_desktop():
     os.makedirs(wv_data, exist_ok=True)
     os.environ["WEBVIEW2_USER_DATA_FOLDER"] = wv_data
 
+    # 窗口图标：assets/app.ico（Windows 任务栏 / 标题栏图标；缺失则用系统默认）。
+    # 注意：pywebview 的图标经 webview.start(icon=...) 传入 —— create_window 没有 icon 参数，
+    # Windows 后端（winforms）在创建 Form 时读取该值设置 Form.Icon（见 winforms.py）。
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "app.ico")
+    icon = icon_path if os.path.isfile(icon_path) else None
+
     webview.create_window(
         title="视界标注专业版",
         url=url,
@@ -1175,7 +1379,7 @@ def _run_desktop():
     )
 
     try:
-        webview.start()
+        webview.start(icon=icon)
     except Exception as e:
         msg = str(e)
         if any(x in msg for x in ("WebView2", "edgechromium", "0x8000FFFF", "E_UNEXPECTED")):
