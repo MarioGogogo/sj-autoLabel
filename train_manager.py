@@ -241,6 +241,11 @@ class TrainManager:
             "CLICOLOR_FORCE": "1",
             "TERM": "xterm-256color",
             "COLORTERM": "truecolor",
+            # 关掉 Ultralytics 的自动装包：export ONNX 时若触发 AutoUpdate 会自动
+            # pip 装 onnx/onnxslim（乃至 CPU 版 onnxruntime），写 .dll 中途被占用/
+            # 权限拒绝会写坏训练环境（ OrtCompileApiFlags 版本错位）。导出只需
+            # torch+onnx+onnxslim，与 onnxruntime 无关。train_runner.py 顶部也设了双保险。
+            "YOLO_AUTOINSTALL": "False",
         }
         py_dir = os.path.dirname(python_path)
         conda_dll = os.path.join(os.path.dirname(py_dir), "Library", "bin")

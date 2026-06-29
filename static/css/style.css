@@ -314,12 +314,24 @@ body {
 }
 
 /* ===== 类别项选中态 ===== */
+/* 未选中：浅底 + 左侧色条；选中：主题蓝半透明背景 + 实色外描边 + 投影，一眼可辨。 */
 .cat-item.active {
-    box-shadow: 0 0 0 1.5px rgba(0, 61, 155, 0.35) inset;
-    filter: brightness(1.03);
+    background: linear-gradient(180deg, rgba(12, 86, 208, 0.16) 0%, rgba(0, 61, 155, 0.08) 100%);
+    box-shadow: 0 0 0 1.5px rgba(12, 86, 208, 0.6), 0 2px 8px rgba(0, 61, 155, 0.18);
 }
+/* 圆点放大 + 白色隔离环 + 主题色光晕，强化「聚焦」感。 */
 .cat-item.active .cat-dot {
-    box-shadow: 0 0 0 3px rgba(0, 61, 155, 0.18);
+    transform: scale(1.18);
+    box-shadow: 0 0 0 2px #ffffff, 0 0 0 4px rgba(12, 86, 208, 0.45);
+}
+/* 类别名加重并染主题色，与未选中项拉开层次。 */
+.cat-item.active .cat-label {
+    color: #003d9b;
+    font-weight: 600;
+}
+/* 占比条选中态加粗一点，呼应选中。 */
+.cat-item.active .cat-bar-track {
+    height: 2px;
 }
 /* 选中态常显删除按钮（hover 由 group-hover 控制）。 */
 .cat-item.active .cat-del-btn {

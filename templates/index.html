@@ -317,6 +317,38 @@
                     </div>
                 </div>
             </div>
+            <!-- 修改类别颜色对话框 -->
+            <div id="catColorDialog"
+                class="hidden fixed inset-0 z-[122] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">
+                <div class="w-[320px] max-w-[92vw] bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl p-md">
+                    <h3 class="font-headline-sm text-headline-sm text-primary mb-md flex items-center gap-xs">
+                        <span class="material-symbols-outlined text-[20px]">palette</span>修改颜色 · <span id="catColorTarget" class="text-on-surface"></span>
+                    </h3>
+                    <div class="space-y-md">
+                        <div>
+                            <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">预设色板</label>
+                            <div id="catColorPalette" class="grid grid-cols-5 gap-xs"></div>
+                        </div>
+                        <div>
+                            <label class="font-label-mono text-[10px] text-on-surface-variant mb-1 block">自定义</label>
+                            <div class="flex items-center gap-sm">
+                                <input id="catColorPicker" type="color" value="#0c56d0"
+                                    class="w-10 h-10 rounded cursor-pointer border border-outline-variant bg-surface p-0" />
+                                <span id="catColorSwatch"
+                                    class="flex-1 h-10 rounded-lg border border-outline-variant"></span>
+                                <input id="catColorHexInput" type="text" maxlength="7" spellcheck="false"
+                                    class="w-[80px] bg-surface border border-outline-variant focus:border-primary transition-colors rounded px-sm py-2 font-label-mono text-xs text-on-surface outline-none uppercase" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex gap-sm mt-lg">
+                        <button id="catColorCancelBtn" type="button"
+                            class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
+                        <button id="catColorConfirmBtn" type="button"
+                            class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">确认</button>
+                    </div>
+                </div>
+            </div>
             {# 目录浏览对话框已移至 main 之后的「全局浮层」区，保证任意阶段可用 #}
             <!-- 模型文件浏览对话框 -->
             <div id="modelBrowseDialog"
@@ -633,6 +665,15 @@
             <div class="px-md py-sm border-b border-outline-variant">
                 <div id="browseCurrentPath" class="font-label-mono text-xs text-on-surface truncate">/</div>
             </div>
+            <div id="browseRecentSection" class="hidden px-md py-sm border-b border-outline-variant">
+                <div class="flex items-center gap-xs mb-xs">
+                    <span class="material-symbols-outlined text-outline text-[16px]">history</span>
+                    <span class="font-label-caps text-label-caps text-outline">最近打开</span>
+                </div>
+                <div id="browseRecentList" class="space-y-xs max-h-[128px] overflow-y-auto custom-scrollbar pr-xs">
+                    {# 历史项目项由 JS 渲染 #}
+                </div>
+            </div>
             <div id="browseDirList" class="flex-1 overflow-y-auto custom-scrollbar p-xs">
                 {# 子目录项由 JS 渲染 #}
             </div>
@@ -670,8 +711,8 @@
     </div>
     <!-- 训练核心默认参数（只读查看，仿 confirmDialog 样式） -->
     <div id="coreParamsDialog"
-        class="hidden fixed inset-0 z-[130] flex items-center justify-center p-md bg-on-surface/40 backdrop-blur-sm">
-        <div class="w-[600px] max-w-[94vw] max-h-[calc(100vh-2rem)] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+        class="hidden fixed inset-0 z-[135] flex items-center justify-center p-md bg-on-surface/40 backdrop-blur-sm">
+        <div class="w-[1100px] max-w-[96vw] max-h-[calc(100vh-2rem)] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
             <div class="flex items-center gap-sm px-md py-sm border-b border-outline-variant">
                 <span class="material-symbols-outlined text-primary">tune</span>
                 <h3 class="font-headline-sm text-headline-sm text-on-surface flex-1">训练核心默认参数</h3>
@@ -682,7 +723,7 @@
             </div>
             <div class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-md">
                 <p id="coreParamsNote" class="font-body-md text-xs text-on-surface-variant mb-sm"></p>
-                <div id="coreParamsBody" class="space-y-sm"></div>
+                <div id="coreParamsBody" class="grid grid-cols-2 gap-md"></div>
             </div>
         </div>
     </div>

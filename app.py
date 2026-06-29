@@ -97,6 +97,21 @@ def _colors_file():
     return os.path.join(ACTIVE_PROJECT, "分类颜色缓存.json")
 
 
+def _count_images_in(path):
+    """统计某项目 images/ 目录下图片文件数（历史列表用，不依赖 ACTIVE_PROJECT）。"""
+    img_dir = os.path.join(path, "images")
+    if not os.path.isdir(img_dir):
+        return 0
+    try:
+        return sum(
+            1 for n in os.listdir(img_dir)
+            if os.path.splitext(n)[1].lower() in ALLOWED_EXT
+            and os.path.isfile(os.path.join(img_dir, n))
+        )
+    except OSError:
+        return 0
+
+
 # ===================== 类别与标注文件读写 =====================
 
 def _read_classes():
@@ -636,6 +651,14 @@ def api_project_open():
     # 缓存项目路径到配置，下次启动自动恢复
     cfg = read_config()
     cfg["lastProjectPath"] = path
+
+    # 维护最近打开历史列表（去重、最近在前、最多 10 条）。
+    recent = cfg.get("recentProjects", [])
+    if path in recent:
+        recent.remove(path)
+    recent.insert(0, path)
+    cfg["recentProjects"] = recent[:10]
+
     write_config(cfg)
 
     images_exists = os.path.isdir(_images_dir())
@@ -676,6 +699,38 @@ def api_project_status():
     if not ACTIVE_PROJECT:
         return jsonify({"ok": True, "opened": False, "lastProjectPath": last_project, "lastModelPath": last_model})
     return jsonify({"ok": True, "opened": True, "projectPath": ACTIVE_PROJECT, "lastProjectPath": last_project, "lastModelPath": last_model})
+
+
+@app.route("/api/project/recent")
+def api_project_recent():
+    """返回最近打开过的项目列表（带存在性 + 图片数），供历史菜单展示。"""
+    cfg = read_config()
+    items = []
+    for path in cfg.get("recentProjects", []):
+        exists = os.path.isdir(path)
+        items.append({
+            "path": path,
+            "name": os.path.basename(path) or path,
+            "exists": exists,
+            "imageCount": _count_images_in(path) if exists else 0,
+        })
+    return jsonify({"ok": True, "items": items})
+
+
+@app.route("/api/project/recent", methods=["DELETE"])
+def api_project_recent_remove():
+    """从历史列表移除一条（路径已删除或用户主动清理）。"""
+    data = request.get_json(silent=True) or {}
+    path = (data.get("path") or "").strip()
+    if not path:
+        return jsonify({"ok": False, "error": "缺少 path"}), 400
+    cfg = read_config()
+    recent = cfg.get("recentProjects", [])
+    if path in recent:
+        recent.remove(path)
+        cfg["recentProjects"] = recent
+        write_config(cfg)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/project/refresh")
@@ -871,6 +926,28 @@ def api_delete_class(label):
     return jsonify({"ok": True, "total": len(names)})
 
 
+@app.route("/api/classes/<path:label>/color", methods=["PUT"])
+def api_update_class_color(label):
+    """更新类别颜色（仅写 colors.json）。类别名/顺序/标注 txt 均不变。
+
+    YOLO txt 只存 class_id 不存颜色，故改色无需重写任何标注文件；
+    画布已有框由前端按新 hex 实时重绘。
+    """
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    data = request.get_json(silent=True) or {}
+    hex_color = (data.get("hex") or "").strip()
+    if not re.fullmatch(r"#[0-9a-fA-F]{6}", hex_color):
+        return jsonify({"ok": False, "error": "颜色格式非法"}), 400
+    names = _read_classes()
+    if label not in names:
+        return jsonify({"ok": False, "error": "类别不存在"}), 404
+    colors = _read_colors()
+    colors[label] = hex_color
+    _write_colors(colors)
+    return jsonify({"ok": True, "category": {"label": label, "hex": hex_color}})
+
+
 # ===================== 单图标注（YOLO txt）=====================
 # 前端坐标：左上角 + 宽高（0~1）。YOLO：中心点 + 宽高（0~1）。
 
@@ -885,8 +962,12 @@ def api_save_labels(image_name):
     names = _read_classes()
 
     if not boxes:
+        # 空 boxes：仅删除「非空」标注（用户清空了真实标注 → 回退 pending），
+        # 保留空 txt（负样本标记）与无 txt（pending）——否则会误删负样本的空 txt，
+        # 让负样本图在重新加载/自动标注空识别后被当成未处理。
+        # 负样本 = 空 txt，见 _is_empty_label / api_normalize_negatives 的约定。
         try:
-            if os.path.exists(txt_path):
+            if os.path.exists(txt_path) and not _is_empty_label(txt_path):
                 os.remove(txt_path)
         except OSError:
             pass

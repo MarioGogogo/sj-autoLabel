@@ -15,6 +15,14 @@ import json
 import os
 import sys
 
+# ⚠️ 必须在 import ultralytics 之前设置（下方 main() 内才 from ultralytics import YOLO）：
+# 阻止 YOLO.export(format="onnx") 时 check_requirements 触发 AutoUpdate，后者会
+# 自动 pip 装 onnx / onnxslim（部分版本还会拉 CPU 版 onnxruntime）。onnxruntime 的
+# .dll 写入中途被占用/权限拒绝 → 「新 .py + 旧 .pyd」版本错位，import onnxruntime
+# 报 'cannot import name OrtCompileApiFlags'，直接写坏用户的训练（yolo）环境。
+# 导出 ONNX 实际只需 torch + onnx + onnxslim，与 onnxruntime（推理用）无关。
+os.environ.setdefault("YOLO_AUTOINSTALL", "False")
+
 # 预设参数（lr0/优化器/数据增强/patience 等）。与 app.py 共享同一数据源，
 # 保证前端弹窗展示的 = 实际注入训练的。按选中预设取起点（兜底 CORE_DEFAULTS），
 # 优先级最低，可被 baseKwargs / 自定义框 / yaml 覆盖。
@@ -72,6 +80,27 @@ def write_result(path, data):
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
+
+
+def export_onnx(pt_path, simplify=True, imgsz=640):
+    """导出 ONNX（与项目内「导出onnx.py」纯导出脚本一致，已验证可行）。
+
+    用训练产物 best.pt 重新加载后再导出（而非用训练时的模型对象 m），
+    显式 simplify=True + dynamic=False + imgsz；配合模块顶部的
+    YOLO_AUTOINSTALL=False，export 全程不触发 Ultralytics 的 AutoUpdate、
+    不碰 onnxruntime，训练（yolo）环境永不被写坏。
+    """
+    print(f"导出 ONNX: {pt_path}", flush=True)
+    from ultralytics import YOLO  # 顶部已设 YOLO_AUTOINSTALL=False，import 安全
+    model = YOLO(pt_path)
+    onnx_path = model.export(
+        format="onnx",
+        simplify=simplify,
+        dynamic=False,
+        imgsz=imgsz,
+    )
+    print(f"✅ 导出完成: {onnx_path}", flush=True)
+    return os.path.abspath(onnx_path)
 
 
 class UnbufferedWriter:
@@ -145,12 +174,16 @@ def main(args):
             weights = os.path.abspath(cand[0])
 
     # 可选导出 ONNX（勾选了才执行）
+    # 完全采用「导出onnx.py」的纯导出方式：用 best.pt 重新加载后导出（非训练对象 m）。
+    # imgsz 沿用本次训练的 imgsz（默认 640），保证导出 ONNX 的输入尺寸与训练一致。
+    # 导出失败不回滚训练（weights 已在、状态仍记 done），仅打印告警 + 完整 traceback。
     onnx = None
     if args.get("exportOnnx"):
         try:
-            onnx = os.path.abspath(m.export(format="onnx"))
+            onnx = export_onnx(weights, imgsz=final.get("imgsz", 640))
         except Exception as e:
-            print(f"\n⚠️ ONNX 导出失败：{e}", flush=True)
+            import traceback
+            print(f"\n⚠️ ONNX 导出失败：{e}\n{traceback.format_exc()}", flush=True)
 
     write_result(args["resultPath"], {"status": "done", "weights": weights, "onnx": onnx})
     print(f"\n训练完成：{weights}" + (f"\nONNX：{onnx}" if onnx else ""), flush=True)

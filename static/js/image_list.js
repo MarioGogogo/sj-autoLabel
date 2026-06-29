@@ -43,6 +43,14 @@
     const catSwatch = document.getElementById("catSwatch");
     const catConfirmBtn = document.getElementById("catConfirmBtn");
     const catCancelBtn = document.getElementById("catCancelBtn");
+    const catColorDialog = document.getElementById("catColorDialog");
+    const catColorTarget = document.getElementById("catColorTarget");
+    const catColorPalette = document.getElementById("catColorPalette");
+    const catColorPicker = document.getElementById("catColorPicker");
+    const catColorSwatch = document.getElementById("catColorSwatch");
+    const catColorHexInput = document.getElementById("catColorHexInput");
+    const catColorConfirmBtn = document.getElementById("catColorConfirmBtn");
+    const catColorCancelBtn = document.getElementById("catColorCancelBtn");
 
     // ===== 项目打开 / 目录浏览元素 =====
     const projectTitle = document.getElementById("projectTitle");
@@ -59,6 +67,8 @@
     const browseManualPath = document.getElementById("browseManualPath");
     const browseSelectBtn = document.getElementById("browseSelectBtn");
     const browseCancelBtn = document.getElementById("browseCancelBtn");
+    const browseRecentSection = document.getElementById("browseRecentSection");
+    const browseRecentList = document.getElementById("browseRecentList");
 
     // ===== 模型加载元素 =====
     const modelPathInput = document.getElementById("modelPathInput");
@@ -456,11 +466,20 @@
 
     function refreshCategoryCounts() {
         if (!categoryList) return;
+        const total = Object.values(categoryCounts).reduce((s, n) => s + (n || 0), 0);
         categoryList.querySelectorAll(".cat-item").forEach((item) => {
             const cat = catByColor(item.dataset.cat);
             const n = cat ? (categoryCounts[cat.label] || 0) : 0;
-            const span = item.querySelector(".cat-count");
-            if (span) span.textContent = n;
+            const pct = total ? Math.round((n / total) * 100) : 0;
+            const countEl = item.querySelector(".cat-count");
+            if (countEl) countEl.textContent = n + "框";
+            const fill = item.querySelector(".cat-bar-fill");
+            if (fill) {
+                fill.style.width = pct + "%";
+                if (cat) fill.style.background = cat.hex;
+            }
+            const pctEl = item.querySelector(".cat-pct");
+            if (pctEl) pctEl.textContent = pct + "%";
         });
     }
 
@@ -484,21 +503,34 @@
         categoryList.innerHTML = "";
         CATEGORIES.forEach((c) => {
             const item = document.createElement("div");
-            item.className = "cat-item group flex items-center gap-sm p-sm bg-surface-container-highest rounded-r cursor-pointer transition-all hover:brightness-95";
+            item.className = "cat-item group flex flex-col gap-xs pl-sm pr-xs py-sm bg-surface-container-highest rounded-lg cursor-pointer transition-all hover:brightness-95";
             item.dataset.cat = c.color;
-            item.style.borderLeft = `6px solid ${c.hex}`;
+            item.style.borderLeft = `5px solid ${c.hex}`;
             if (c.color === activeCategory.color) item.classList.add("active");
             item.innerHTML = `
-                <span class="cat-dot w-3 h-3 rounded-full flex-shrink-0" style="background:${c.hex}"></span>
-                <span class="flex-1 font-label-mono text-xs" style="color:${c.hex}">${escapeHtml(c.label)}</span>
-                <span class="cat-count text-xs font-label-mono text-outline">0</span>
-                <button type="button" title="删除类别"
-                    class="cat-del-btn flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100">
-                    <span class="material-symbols-outlined text-[16px]">close</span>
-                </button>
+                <div class="flex items-center gap-sm">
+                    <span class="cat-dot w-3 h-3 rounded-full flex-shrink-0 ring-2 ring-white/50 cursor-pointer hover:scale-110 transition-transform" style="background:${c.hex}" title="点击修改颜色"></span>
+                    <span class="cat-label flex-1 font-label-mono text-xs text-on-surface truncate">${escapeHtml(c.label)}</span>
+                    <span class="cat-count text-[11px] font-label-mono text-on-surface-variant whitespace-nowrap">0框</span>
+                    <button type="button" title="修改颜色"
+                        class="cat-edit-btn flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-primary hover:bg-primary/10 transition-all opacity-0 group-hover:opacity-100">
+                        <span class="material-symbols-outlined text-[16px]">palette</span>
+                    </button>
+                    <button type="button" title="删除类别"
+                        class="cat-del-btn flex-shrink-0 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-error hover:bg-error/10 transition-all opacity-0 group-hover:opacity-100">
+                        <span class="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                </div>
+                <div class="flex items-center gap-xs pl-[20px]">
+                    <div class="cat-bar-track flex-1 h-1.5 rounded-full bg-surface-variant overflow-hidden">
+                        <div class="cat-bar-fill h-full rounded-full transition-all" style="width:0%;background:${c.hex}"></div>
+                    </div>
+                    <span class="cat-pct text-[10px] font-label-mono text-outline w-8 text-right">0%</span>
+                </div>
             `;
             categoryList.appendChild(item);
         });
+        refreshCategoryCounts(); // 重绘后立即同步计数与占比
     }
 
     /** 简易 HTML 转义，防止类别名含特殊字符破坏 DOM。 */
@@ -586,10 +618,111 @@
         return true;
     }
 
-    /** 绑定右侧类别区域：点击切换当前类别、删除类别、添加新类别。 */
+    // ===================== 类别颜色编辑 =====================
+    const COLOR_PALETTE = [
+        "#0c56d0", "#2e7d32", "#ef6c00", "#6a1b9a", "#00838f",
+        "#c62828", "#455a64", "#f9a825", "#5e35b1", "#00897b",
+    ];
+    let colorEditing = null; // 正在编辑颜色的类别 color 标识
+
+    /** 填充预设色板（首次打开时渲染一次）。 */
+    function ensureColorPalette() {
+        if (!catColorPalette || catColorPalette.childElementCount) return;
+        catColorPalette.innerHTML = COLOR_PALETTE.map((hex) =>
+            `<button type="button" class="cat-preset-swatch w-7 h-7 rounded-full border border-outline-variant hover:scale-110 transition-transform" data-hex="${hex}" style="background:${hex}" title="${hex}"></button>`
+        ).join("");
+    }
+
+    /** 同步选色器三控件（picker / swatch / hex 输入）到指定 hex，并高亮命中的预设色。 */
+    function syncColorUI(hex) {
+        const h = hex.toLowerCase();
+        if (catColorPicker) catColorPicker.value = h;
+        if (catColorSwatch) catColorSwatch.style.background = h;
+        if (catColorHexInput) catColorHexInput.value = h.toUpperCase();
+        if (catColorPalette) {
+            catColorPalette.querySelectorAll(".cat-preset-swatch").forEach((b) => {
+                const on = b.dataset.hex.toLowerCase() === h;
+                b.classList.toggle("ring-2", on);
+                b.classList.toggle("ring-offset-1", on);
+            });
+        }
+    }
+
+    /** 打开颜色编辑弹窗（圆点 / 编辑按钮入口）。 */
+    function openColorDialog(color) {
+        const cat = catByColor(color);
+        if (!cat || !catColorDialog) return;
+        colorEditing = color;
+        ensureColorPalette();
+        if (catColorTarget) catColorTarget.textContent = cat.label;
+        syncColorUI(cat.hex);
+        catColorDialog.classList.remove("hidden");
+    }
+
+    function closeColorDialog() {
+        if (catColorDialog) catColorDialog.classList.add("hidden");
+        colorEditing = null;
+    }
+
+    /** 确认：把当前 hex 写回后端（colors.json），再前端联动。 */
+    async function confirmColorEdit() {
+        if (!colorEditing) return;
+        const cat = catByColor(colorEditing);
+        if (!cat) { closeColorDialog(); return; }
+        let hex = ((catColorHexInput && catColorHexInput.value) || (catColorPicker && catColorPicker.value) || "").trim();
+        if (!/^#[0-9a-fA-F]{6}$/.test(hex)) { showToast("颜色格式非法（需 #rrggbb）"); return; }
+        hex = hex.toLowerCase();
+        if (hex === (cat.hex || "").toLowerCase()) { closeColorDialog(); return; } // 未变化
+        try {
+            const resp = await fetch(`/api/classes/${encodeURIComponent(cat.label)}/color`, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ hex }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) { showToast(data.error || "修改失败"); return; }
+            updateCategoryColor(colorEditing, hex);
+            closeColorDialog();
+            showToast(`已更新「${cat.label}」颜色`);
+        } catch (e) {
+            showToast("修改失败：" + e.message);
+        }
+    }
+
+    /**
+     * 颜色更新后的前端联动：
+     *  - CATEGORIES 该项 hex
+     *  - 画布上该类别已有框 hex + 重绘
+     *  - 列表重绘（色条 / 圆点 / 进度条 全用新 hex；active 由 renderCategoryList 自动恢复）
+     */
+    function updateCategoryColor(color, hex) {
+        const cat = catByColor(color);
+        if (!cat) return;
+        cat.hex = hex;
+        if (activeCategory.color === color) activeCategory.hex = hex;
+        let changed = false;
+        currentBoxes.forEach((b) => {
+            if (b.label === cat.label && (b.hex || "").toLowerCase() !== hex) {
+                b.hex = hex; changed = true;
+            }
+        });
+        if (changed) renderBoxes();
+        renderCategoryList();
+    }
+
+    /** 绑定右侧类别区域：点击切换当前类别、改色、删除类别、添加新类别。 */
     function bindCategory() {
         if (!categoryList) return;
         categoryList.addEventListener("click", (e) => {
+            // 圆点 / 编辑按钮：改色（阻止冒泡，不触发选中）。
+            const editBtn = e.target.closest(".cat-edit-btn");
+            const dot = e.target.closest(".cat-dot");
+            if (editBtn || dot) {
+                e.stopPropagation();
+                const item = (editBtn || dot).closest(".cat-item");
+                if (item) openColorDialog(item.dataset.cat);
+                return;
+            }
             // 删除按钮：阻止冒泡，不触发选中。
             const delBtn = e.target.closest(".cat-del-btn");
             if (delBtn) {
@@ -653,6 +786,31 @@
         // 回车确认。
         catNameInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") { e.preventDefault(); catConfirmBtn.click(); }
+        });
+    }
+
+    /** 绑定颜色编辑弹窗交互：色板 / 原生色盘 / hex 输入联动 + 确认 / 取消 / 遮罩。 */
+    function bindColorDialog() {
+        if (!catColorDialog) return;
+        if (catColorPalette) {
+            catColorPalette.addEventListener("click", (e) => {
+                const sw = e.target.closest(".cat-preset-swatch");
+                if (sw) syncColorUI(sw.dataset.hex);
+            });
+        }
+        if (catColorPicker) {
+            catColorPicker.addEventListener("input", () => syncColorUI(catColorPicker.value));
+        }
+        if (catColorHexInput) {
+            catColorHexInput.addEventListener("input", () => {
+                const v = catColorHexInput.value.trim();
+                if (/^#[0-9a-fA-F]{6}$/.test(v)) syncColorUI(v);
+            });
+        }
+        if (catColorConfirmBtn) catColorConfirmBtn.addEventListener("click", confirmColorEdit);
+        if (catColorCancelBtn) catColorCancelBtn.addEventListener("click", closeColorDialog);
+        catColorDialog.addEventListener("click", (e) => {
+            if (e.target === catColorDialog) closeColorDialog();
         });
     }
 
@@ -1049,6 +1207,8 @@
                 // Esc：关闭对话框 / 退出绘制模式 / 取消选中 / 关闭右键菜单。
                 if (confirmDialog && !confirmDialog.classList.contains("hidden")) {
                     e.preventDefault(); resolveConfirm(false);
+                } else if (catColorDialog && !catColorDialog.classList.contains("hidden")) {
+                    e.preventDefault(); closeColorDialog();
                 } else if (catDialog && !catDialog.classList.contains("hidden")) {
                     e.preventDefault(); closeAddCategoryDialog();
                 } else if (samMode) setSamMode(false);
@@ -1442,13 +1602,19 @@
             if (selectedName) {
                 const node = imageList.querySelector(`.img-item[data-name="${CSS.escape(selectedName)}"]`);
                 if (node) {
-                    if (n > 0 && node.dataset.status !== "done") {
-                        applyItemStatus(node, "done");
-                        if (node._img) node._img.status = "done";
-                    } else if (n === 0 && node.dataset.status !== "pending") {
-                        // 框全删了 → 回退为「待处理」。
-                        applyItemStatus(node, "pending");
-                        if (node._img) node._img.status = "pending";
+                    if (n > 0) {
+                        if (node.dataset.status !== "done") {
+                            applyItemStatus(node, "done");
+                            if (node._img) node._img.status = "done";
+                        }
+                    } else {
+                        // n === 0：仅把「已处理(done)被清空」降为 pending；
+                        // 负样本(negative)的空 txt 是合法落盘状态，保持不变，
+                        // 避免自动标注空识别等空保存把负样本误降级为 pending。
+                        if (node.dataset.status === "done") {
+                            applyItemStatus(node, "pending");
+                            if (node._img) node._img.status = "pending";
+                        }
                     }
                     updateProgress();
                 }
@@ -1548,7 +1714,74 @@
         if (!browseDialog) return;
         browseDialog.classList.remove("hidden");
         browseManualPath.value = "";
+        loadBrowseRecent(); // 拉取最新历史项目列表
         await loadBrowseDir("");
+    }
+
+    /** 加载并渲染历史项目列表（无历史则隐藏区块）。 */
+    async function loadBrowseRecent() {
+        if (!browseRecentList || !browseRecentSection) return;
+        try {
+            const resp = await fetch("/api/project/recent");
+            const data = await resp.json();
+            const items = (data.items || []).filter(Boolean);
+            if (!items.length) {
+                browseRecentSection.classList.add("hidden");
+                browseRecentList.innerHTML = "";
+                return;
+            }
+            browseRecentSection.classList.remove("hidden");
+            browseRecentList.innerHTML = "";
+            items.forEach((it) => {
+                const missing = !it.exists;
+                const row = document.createElement("div");
+                row.className = "group flex items-center gap-sm px-sm py-[6px] rounded-lg hover:bg-primary/5 transition-all" + (missing ? " cursor-not-allowed" : " cursor-pointer");
+                row.innerHTML = `
+                    <span class="material-symbols-outlined ${missing ? "text-outline" : "text-primary"} text-[18px] flex-shrink-0">${missing ? "folder_off" : "folder"}</span>
+                    <div class="min-w-0 flex-1">
+                        <div class="font-label-mono text-xs ${missing ? "text-outline line-through" : "text-on-surface"} truncate">${escapeHtml(it.name)}</div>
+                        <div class="font-label-mono text-[10px] text-outline truncate">${escapeHtml(it.path)}</div>
+                    </div>
+                    <span class="font-label-mono text-[10px] ${missing ? "text-error" : "text-outline"} flex-shrink-0">${missing ? "已缺失" : it.imageCount + " 张"}</span>
+                    <button type="button" title="移出历史"
+                        class="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-outline hover:text-error hover:bg-error/10 transition-all flex-shrink-0">
+                        <span class="material-symbols-outlined text-[16px]">close</span>
+                    </button>
+                `;
+                // 点击行 → 打开项目（仅当存在）。
+                row.addEventListener("click", async (e) => {
+                    if (e.target.closest("button")) return; // 移除按钮单独处理
+                    if (missing) {
+                        showToast("该路径已不存在，可点击右侧 × 移出历史");
+                        return;
+                    }
+                    await openProject(it.path);
+                    closeBrowseDialog();
+                });
+                // 移除按钮：删除该历史项后刷新列表（不关对话框，方便连删）。
+                row.querySelector("button").addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    await removeRecentProject(it.path);
+                });
+                browseRecentList.appendChild(row);
+            });
+        } catch (e) { /* 静默：历史列表加载失败不影响目录浏览 */ }
+    }
+
+    /** 从历史列表移除一条。 */
+    async function removeRecentProject(path) {
+        try {
+            const resp = await fetch("/api/project/recent", {
+                method: "DELETE",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ path }),
+            });
+            const data = await resp.json();
+            if (!resp.ok || !data.ok) throw new Error(data.error || "移除失败");
+            await loadBrowseRecent();
+        } catch (e) {
+            showToast("移除失败：" + e.message);
+        }
     }
 
     function closeBrowseDialog() {
@@ -2131,6 +2364,7 @@
         bindDialogs();
         bindCategory();
         bindCategoryDialog();
+        bindColorDialog();
         bindKeys();
 
         // 置信度阈值滑块。
