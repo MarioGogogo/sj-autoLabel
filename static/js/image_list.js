@@ -115,6 +115,13 @@
     const confirmCancelBtn = document.getElementById("confirmCancelBtn");
     const toastEl = document.getElementById("toast");
     const notifyStack = document.getElementById("notifyStack");
+    // 首次初始化检测弹窗
+    const initDialog = document.getElementById("initCheckDialog");
+    const initStepsEl = document.getElementById("initSteps");
+    const initProgressBar = document.getElementById("initProgressBar");
+    const initProgressText = document.getElementById("initProgressText");
+    const initRetryBtn = document.getElementById("initRetryBtn");
+    const initEnterBtn = document.getElementById("initEnterBtn");
 
     let selectedName = null; // 当前选中图片的物理文件名（唯一标识）
     let currentProject = null; // 当前打开的项目元信息
@@ -2402,7 +2409,7 @@
     // ===================== 顶部阶段时间线 stepper =====================
     // 三个阶段（智能标注 → 数据集训练 → 模型验证）以圆形节点 + 连接线呈现。
     // 点击节点切换主视图：智能标注=现有三栏工作台；另两个为占位页（即将上线）。
-    // 进度语义：当前阶段=进行中（呼吸放大），其前者=已完成（打勾），其后者=未到达（置灰）。
+    // 进度语义：当前阶段=进行中（品牌蓝高亮），其前者=已完成（打勾），其后者=未到达（置灰）。
     function bindStageNav() {
         const nav = document.getElementById("stageNav");
         if (!nav) return;
@@ -2463,6 +2470,9 @@
             const envResp = await fetch("/api/env/check");
             const envData = await envResp.json();
             if (envData.ok) {
+                // 首次运行：弹出环境健康检查 stepper
+                if (envData.firstRun) showInitCheckDialog(envData);
+
                 const hasRuntime = envData.pt || envData.onnx;
                 const cfg = envData.config || {};
                 const hasConfig = cfg.hasWorker || !!cfg.pythonPath;
@@ -2516,6 +2526,165 @@
             }
         } catch (e) {
             refreshMeta(0);
+        }
+    }
+
+    // ===== 首次初始化检测弹窗（时间线 stepper，复刻 dialog.html） =====
+    /** 5 项检测定义：从 envData 计算每项状态与文案。 */
+    function buildInitSteps(env) {
+        const d = env.details || {};
+        const gpu = env.gpu || {};
+        // PyTorch 套件版本串
+        let torchDetail = "";
+        if (env.pt) {
+            const parts = [];
+            if (d.torch && d.torch.indexOf("未安装") === -1) parts.push(`torch ${d.torch}`);
+            if (d.torchvision && d.torchvision.indexOf("未安装") === -1) parts.push(`torchvision ${d.torchvision}`);
+            if (d.ultralytics && d.ultralytics.indexOf("未安装") === -1) parts.push(`ultralytics ${d.ultralytics}`);
+            torchDetail = `已就绪：${parts.join(" · ")}`;
+        } else {
+            torchDetail = "未安装（pip install torch ultralytics）";
+        }
+        return [
+            {
+                label: "Python 运行时",
+                ok: true,
+                detail: `已找到: Python ${env.python || "?"}`,
+            },
+            {
+                label: "PyTorch 套件",
+                ok: !!env.pt,
+                detail: torchDetail,
+            },
+            {
+                label: "ONNX Runtime",
+                ok: !!env.onnx,
+                detail: env.onnx ? `已安装 onnxruntime ${d.onnxruntime || ""}` : "未安装（pip install onnxruntime）",
+            },
+            {
+                label: "SAM 2 分割",
+                ok: !!env.sam2,
+                detail: env.sam2 ? `已安装 sam2 ${d.sam2 || ""}` : "未安装（可选，pip install sam2）",
+            },
+            {
+                label: "GPU 硬件加速",
+                ok: !!gpu.available,
+                detail: gpu.available
+                    ? `已检测到 ${gpu.name || "NVIDIA GPU"} · CUDA ${gpu.cuda || "?"}（驱动 ${gpu.driver || "?"}）`
+                    : "未检测到 NVIDIA GPU / 驱动（推理将使用 CPU）",
+            },
+        ];
+    }
+
+    /** 渲染单行 stepper：state ∈ {success, active, fail, pending}。 */
+    function renderInitStep(step, state) {
+        const isLast = step.isLast;
+        let iconHtml = "";
+        let titleCls = "font-label-md text-label-md text-on-surface";
+        let detailCls = "font-label-sm text-label-sm text-secondary font-mono mt-0.5";
+        let rowOpacity = "";
+
+        if (state === "success") {
+            iconHtml = `<div class="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center text-green-700">
+                <span class="material-symbols-outlined text-[20px]">check</span></div>`;
+        } else if (state === "active") {
+            iconHtml = `<div class="w-8 h-8 rounded-full bg-primary-container/20 flex items-center justify-center text-primary-container">
+                <span class="material-symbols-outlined text-[20px] loading-spinner">autorenew</span></div>`;
+            titleCls = "font-label-md text-label-md text-primary font-bold";
+        } else if (state === "fail") {
+            iconHtml = `<div class="w-8 h-8 rounded-full bg-error-container flex items-center justify-center text-error">
+                <span class="material-symbols-outlined text-[20px]">close</span></div>`;
+            titleCls = "font-label-md text-label-md text-error";
+            detailCls = "font-label-sm text-label-sm text-error/80 font-mono mt-0.5";
+        } else {
+            // pending
+            iconHtml = `<div class="w-8 h-8 rounded-full bg-surface-variant flex items-center justify-center text-on-surface-variant">
+                <span class="material-symbols-outlined text-[20px]">circle</span></div>`;
+            titleCls = "font-label-md text-label-md text-on-surface-variant";
+            detailCls = "font-label-sm text-label-sm text-on-surface-variant font-mono mt-0.5";
+            rowOpacity = "opacity-40";
+        }
+
+        const activeBadge = state === "active"
+            ? `<div class="flex items-center gap-xs mt-0.5">
+                 <div class="w-1.5 h-1.5 bg-primary rounded-full pulse-dot"></div>
+                 <p class="font-label-sm text-label-sm text-on-surface-variant font-mono">正在校验环境分配...</p>
+               </div>`
+            : `<p class="${detailCls}">${escapeHtml(step.detail)}</p>`;
+
+        const connector = isLast ? "" : `<div class="w-0.5 h-full min-h-[32px] bg-outline-variant mt-sm"></div>`;
+
+        return `<div class="flex items-start gap-md group ${rowOpacity}">
+            <div class="relative flex flex-col items-center">
+                ${iconHtml}
+                ${connector}
+            </div>
+            <div class="pt-1">
+                <h4 class="${titleCls}">${escapeHtml(step.label)}</h4>
+                ${activeBadge}
+            </div>
+        </div>`;
+    }
+
+    /** 驱动 stepper：先全 pending → 逐项 active → 落定，进度条同步推进。 */
+    async function runInitCheck(envData) {
+        if (!initStepsEl) return;
+        const steps = buildInitSteps(envData);
+        steps.forEach((s, i) => { s.isLast = i === steps.length - 1; });
+
+        const setProgress = (pct) => {
+            if (initProgressBar) initProgressBar.style.width = `${pct}%`;
+            if (initProgressText) initProgressText.textContent = `${pct}%`;
+        };
+
+        // 初始：全部 pending
+        initStepsEl.innerHTML = steps.map((s) => renderInitStep(s, "pending")).join("");
+        setProgress(0);
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+        // 逐项扫描
+        for (let i = 0; i < steps.length; i++) {
+            // 当前项 → active
+            initStepsEl.children[i].outerHTML = renderInitStep(steps[i], "active");
+            await wait(350);
+            // 落定
+            initStepsEl.children[i].outerHTML = renderInitStep(steps[i], steps[i].ok ? "success" : "fail");
+            setProgress(Math.round(((i + 1) / steps.length) * 100));
+            await wait(120);
+        }
+    }
+
+    /** 显示初始化弹窗并绑定按钮（仅首次运行调用）。 */
+    function showInitCheckDialog(envData) {
+        if (!initDialog) return;
+        initDialog.classList.remove("hidden");
+        let current = envData;
+
+        const run = (data) => { current = data; runInitCheck(data); };
+        run(envData);
+
+        if (initRetryBtn) {
+            // 替换绑定，避免重复挂载
+            const fresh = initRetryBtn.cloneNode(true);
+            initRetryBtn.parentNode.replaceChild(fresh, initRetryBtn);
+            fresh.addEventListener("click", async () => {
+                fresh.disabled = true;
+                try {
+                    const resp = await fetch("/api/env/check?force=1");
+                    const data = await resp.json();
+                    if (data.ok) run(data);
+                } catch (e) { /* 静默 */ }
+                finally { fresh.disabled = false; }
+            });
+        }
+        if (initEnterBtn) {
+            const fresh = initEnterBtn.cloneNode(true);
+            initEnterBtn.parentNode.replaceChild(fresh, initEnterBtn);
+            fresh.addEventListener("click", async () => {
+                fresh.disabled = true;
+                try { await fetch("/api/init/done", { method: "POST" }); } catch (e) { /* 静默 */ }
+                initDialog.classList.add("hidden");
+            });
         }
     }
 

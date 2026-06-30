@@ -689,6 +689,51 @@
             </div>
         </div>
     </div>
+    <!-- 首次初始化检测弹窗（时间线 stepper，复刻 dialog.html） -->
+    <div id="initCheckDialog"
+        class="hidden fixed inset-0 z-[160] flex items-center justify-center bg-on-background/20 backdrop-blur-[4px]">
+        <div class="w-full max-w-xl bg-surface-container-lowest rounded-xl shadow-2xl border border-outline-variant overflow-hidden flex flex-col">
+            <!-- Modal Header -->
+            <div class="p-lg bg-surface-container-low border-b border-outline-variant flex items-center gap-md">
+                <div class="w-12 h-12 bg-primary rounded-lg flex items-center justify-center text-on-primary">
+                    <span class="material-symbols-outlined text-[32px]">settings_input_component</span>
+                </div>
+                <div>
+                    <h1 class="font-headline-md text-headline-md text-primary">视界标注专业版</h1>
+                    <p class="font-body-md text-on-surface-variant">系统配置与环境健康检查</p>
+                </div>
+            </div>
+            <!-- Modal Content: Timeline Stepper（由 JS 渲染 5 行） -->
+            <div id="initSteps" class="p-lg flex-1 space-y-md">
+            </div>
+            <!-- Modal Footer -->
+            <div class="p-lg bg-surface-container-low border-t border-outline-variant space-y-md">
+                <!-- Progress Bar -->
+                <div class="space-y-xs">
+                    <div class="flex justify-between font-label-mono text-label-sm text-on-surface-variant">
+                        <span>初始化进度</span>
+                        <span id="initProgressText">0%</span>
+                    </div>
+                    <div class="w-full h-1 bg-surface-container-highest rounded-full overflow-hidden">
+                        <div id="initProgressBar" class="h-full bg-primary w-0 transition-all duration-500 ease-out"></div>
+                    </div>
+                </div>
+                <!-- Action Buttons -->
+                <div class="flex justify-end gap-sm pt-sm">
+                    <button id="initRetryBtn" type="button"
+                        class="px-lg py-sm rounded-lg font-label-md border border-outline hover:bg-surface-variant transition-all flex items-center gap-xs">
+                        <span class="material-symbols-outlined text-[18px]">refresh</span>
+                        重试
+                    </button>
+                    <button id="initEnterBtn" type="button"
+                        class="px-lg py-sm rounded-lg font-label-md bg-primary text-on-primary hover:opacity-90 transition-all flex items-center gap-xs">
+                        进入程序
+                        <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
     <!-- 通用确认对话框（可复用） -->
     <div id="confirmDialog"
         class="hidden fixed inset-0 z-[130] flex items-center justify-center bg-on-surface/40 backdrop-blur-sm">

@@ -87,6 +87,24 @@ body {
     to   { opacity: 0; transform: translateX(120%); }
 }
 
+/* ===== 初始化检测弹窗：进行中态动画（复刻 dialog.html） ===== */
+.loading-spinner {
+    animation: rotate 2s linear infinite;
+}
+
+@keyframes rotate {
+    100% { transform: rotate(360deg); }
+}
+
+.pulse-dot {
+    animation: pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .3; }
+}
+
 /* 状态色：左侧描边 + 图标颜色。 */
 .notify-card.success { border-left-color: #16a34a; }
 .notify-card.info    { border-left-color: #003d9b; }
@@ -339,15 +357,15 @@ body {
 }
 
 /* ===== 顶部阶段时间线 stepper（智能标注 → 数据集训练 → 模型验证） ===== */
-/* 圆形节点 + 连接线：点击切换阶段；当前阶段呼吸放大、已完成打勾、连线随进度变蓝。 */
+/* 横排 stepper：圆形编号 + 右侧文字标签同行；当前=品牌蓝高亮，未到=灰，已走过连线变蓝。 */
 .stage-nav {
     gap: 0;
 }
 .stage-nav .step {
     display: flex;
-    flex-direction: column;
+    flex-direction: row;        /* 圆在左、文字在右，一行排布 */
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     background: none;
     border: none;
     cursor: pointer;
@@ -355,9 +373,10 @@ body {
     font-family: inherit;
     flex-shrink: 0;
 }
+/* 圆形节点：24px 实心填充，内嵌序号（已完成态由 JS 注入 check 图标）。 */
 .stage-nav .step-node {
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     display: flex;
     align-items: center;
@@ -365,91 +384,65 @@ body {
     font-size: 12px;
     font-weight: 700;
     font-family: "JetBrains Mono", monospace;
-    background: #ffffff;
-    border: 2px solid #c3c6d6;
-    color: #737685;
+    background: #c8cad6;        /* 未到：实心灰 */
+    color: #ffffff;
     transition: background-color .25s cubic-bezier(.22, 1, .36, 1),
-        border-color .25s cubic-bezier(.22, 1, .36, 1),
-        color .25s cubic-bezier(.22, 1, .36, 1),
-        transform .25s cubic-bezier(.22, 1, .36, 1),
-        box-shadow .25s cubic-bezier(.22, 1, .36, 1);
+        color .25s cubic-bezier(.22, 1, .36, 1);
 }
 .stage-nav .step-node .material-symbols-outlined {
-    font-size: 16px;
+    font-size: 15px;
 }
+/* 文字标签：14px，未到=灰。 */
 .stage-nav .step-label {
-    font-size: 11px;
-    letter-spacing: .04em;
-    font-weight: 600;
-    color: #737685;
+    font-size: 14px;
+    font-weight: 500;
+    color: #9aa0ab;
     white-space: nowrap;
     transition: color .25s ease;
 }
-/* 连接线：顶对齐布局下，margin-top 把线压到圆心高度（28/2 - 1）；末端带箭头表示流向。 */
+/* 连接线：横排下由 nav 的 items-center 自动垂直居中；无箭头，浅灰细轨。 */
 .stage-nav .step-connector {
-    position: relative;
-    width: 84px;
+    width: 36px;
     flex: none;
     height: 2px;
-    background: #c3c6d6;
-    margin-top: 13px;
+    background: #d9dbe2;
     border-radius: 2px;
+    margin: 0 6px;
     transition: background .35s ease;
 }
-/* 末端三角箭头，颜色随连线（未到达=灰，已推进=蓝）。 */
-.stage-nav .step-connector::after {
-    content: "";
-    position: absolute;
-    right: -1px;
-    top: 50%;
-    transform: translateY(-50%);
-    width: 0;
-    height: 0;
-    border-left: 7px solid #c3c6d6;
-    border-top: 5px solid transparent;
-    border-bottom: 5px solid transparent;
-    transition: border-left-color .35s ease;
-}
-/* 已完成：实心渐变 + 勾。 */
+/* 已完成：品牌蓝实心圆 + 勾；文字次级深色。 */
 .stage-nav .step.completed .step-node {
-    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
-    border-color: transparent;
+    background: #0c56d0;
     color: #ffffff;
 }
 .stage-nav .step.completed .step-label {
     color: #434654;
 }
-/* 进行中：放大 + 光晕 + 呼吸。 */
+/* 当前：品牌蓝实心圆 + 蓝色加粗文字（无放大/光晕/呼吸，贴合设计稿简洁感）。 */
 .stage-nav .step.active .step-node {
-    background: linear-gradient(180deg, #0c56d0 0%, #003d9b 100%);
-    border-color: transparent;
+    background: #0c56d0;
     color: #ffffff;
-    transform: scale(1.12);
-    box-shadow: 0 0 0 4px rgba(12, 86, 208, .15), 0 4px 12px rgba(0, 61, 155, .35);
-    animation: step-pulse 2.4s ease-in-out infinite;
 }
 .stage-nav .step.active .step-label {
-    color: #003d9b;
+    color: #0c56d0;
     font-weight: 700;
 }
-@keyframes step-pulse {
-    0%, 100% { box-shadow: 0 0 0 4px rgba(12, 86, 208, .15), 0 4px 12px rgba(0, 61, 155, .35); }
-    50% { box-shadow: 0 0 0 7px rgba(12, 86, 208, .08), 0 4px 14px rgba(0, 61, 155, .40); }
-}
-/* 当前阶段之前的连线变蓝，体现「已推进」；箭头同步变蓝。 */
+/* 当前阶段之前的连线变蓝，体现「已推进」。 */
 .stage-nav .step-connector.passed {
-    background: linear-gradient(90deg, #0c56d0 0%, #003d9b 100%);
+    background: #0c56d0;
 }
-.stage-nav .step-connector.passed::after {
-    border-left-color: #003d9b;
+/* hover 预览：仅未到达项轻量提示，active/completed 维持自身态。 */
+.stage-nav .step:hover:not(.active):not(.completed) .step-node {
+    background: #0c56d0;
 }
-/* hover 预览（仅未到达项变色，active/completed 维持自身态）。 */
-.stage-nav .step:hover .step-node {
-    border-color: #0c56d0;
-    color: #003d9b;
+.stage-nav .step:hover:not(.active):not(.completed) .step-label {
+    color: #0c56d0;
 }
-.stage-nav .step:hover .step-label {
-    color: #003d9b;
+/* 键盘焦点轮廓（无障碍）：Tab 切换时可见焦点环。 */
+.stage-nav .step:focus-visible {
+    outline: 2px solid rgba(12, 86, 208, .55);
+    outline-offset: 4px;
+    border-radius: 8px;
 }
 
 /* ===== 阶段视图切换 ===== */

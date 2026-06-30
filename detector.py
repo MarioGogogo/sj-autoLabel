@@ -18,24 +18,39 @@ from sam_engine import SamHolder
 _ENV_CACHE = None  # 缓存检测结果，只跑一次
 
 
-def check_environment():
+def check_environment(force=False):
     """检测当前环境 + 扫描外部 conda/venv 中可用的推理运行时。
 
     返回:
         {
             pt: bool,       # 当前进程可 import torch + ultralytics
             onnx: bool,     # 当前进程可 import onnxruntime
+            sam2: bool,     # 当前进程可 import sam2
+            python: str,    # 当前解释器版本（如 "3.14.0"）
+            gpu: {available, name, driver, cuda},  # nvidia-smi 独立探测
             details: {package: version|"未安装（...）"},
             external: [     # 其他环境中发现的可用于推理的环境
                 {name, python, torch, ultralytics, onnxruntime}
             ],
         }
+
+    force=True 时清空缓存重新探测（供初始化弹窗「重试」重测 GPU）。
     """
     global _ENV_CACHE
+    if force:
+        _ENV_CACHE = None
     if _ENV_CACHE is not None:
         return _ENV_CACHE
 
-    result = {"pt": False, "onnx": False, "sam2": False, "details": {}, "external": []}
+    result = {
+        "pt": False,
+        "onnx": False,
+        "sam2": False,
+        "python": sys.version.split()[0],
+        "gpu": _check_gpu(),
+        "details": {},
+        "external": [],
+    }
 
     # ---- 当前进程检测 ----
     _check_current_process(result)
@@ -78,6 +93,58 @@ def _check_current_process(result):
         result["details"]["sam2"] = _try_version("sam2")
     else:
         result["details"]["sam2"] = "未安装（pip install sam2）"
+
+
+def _check_gpu():
+    """通过 nvidia-smi 独立探测 NVIDIA GPU（不依赖 torch）。
+
+    当前 venv 多半未安装 torch，故用 nvidia-smi 命令行直接拿
+    GPU 名 / 驱动版本 / CUDA 版本。无 NVIDIA GPU 或命令缺失时返回 available=False。
+    """
+    try:
+        # --query-gpu 精确取字段；CUDA 版本只随驱动 query 附带在 stdout 里
+        proc = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,driver_version",
+                "--format=csv,noheader",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        if proc.returncode != 0:
+            return {"available": False}
+        line = (proc.stdout or "").strip().splitlines()
+        if not line:
+            return {"available": False}
+        name, driver = (line[0].split(",") + ["", ""])[:2]
+        name, driver = name.strip(), driver.strip()
+
+        # CUDA 版本：从 nvidia-smi 顶部摘要抓取。新版驱动写作
+        # "CUDA UMD Version: 13.3"，老版写作 "CUDA Version: 13.3"，
+        # 故按「CUDA」关键字定位后取其后第一个 x.y 版本号。
+        cuda = ""
+        try:
+            proc2 = subprocess.run(
+                ["nvidia-smi"], capture_output=True, text=True, timeout=8
+            )
+            out = proc2.stdout or ""
+            m = out.find("CUDA")
+            if m != -1:
+                tail = out[m:m + 80]
+                import re
+
+                mt = re.search(r"(\d+\.\d+)", tail)
+                cuda = mt.group(1) if mt else ""
+        except Exception:
+            pass
+
+        return {"available": True, "name": name, "driver": driver, "cuda": cuda}
+    except (FileNotFoundError, OSError):
+        return {"available": False}
+    except Exception:
+        return {"available": False}
 
 
 def _scan_external_envs():

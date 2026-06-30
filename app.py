@@ -437,16 +437,27 @@ def api_model_status():
 @app.route("/api/env/check")
 def api_env_check():
     """检测当前 Python 环境可运行哪些模型格式，含外部环境扫描和当前配置。"""
-    env = check_environment()
+    force = request.args.get("force") in ("1", "true", "True")
+    env = check_environment(force)
     cfg = read_config()
     return jsonify({
         "ok": True,
         **env,
+        "firstRun": not bool(cfg.get("envCheckDone", False)),
         "config": {
             "pythonPath": cfg.get("pythonPath", ""),
             "hasWorker": bool(cfg.get("pythonPath") and detector._use_worker),
         },
     })
+
+
+@app.route("/api/init/done", methods=["POST"])
+def api_init_done():
+    """标记首次初始化检测已完成（写入 envCheckDone，之后启动不再弹窗）。"""
+    cfg = read_config()
+    cfg["envCheckDone"] = True
+    write_config(cfg)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/env/config", methods=["GET"])
@@ -1407,6 +1418,14 @@ def _run_desktop():
     import threading
     import sys
     import time
+
+    # Windows 任务栏图标：必须显式设置 AppUserModelID（AUMID）。
+    # 否则任务栏会把本窗口归到宿主进程 python.exe，显示 Python 而非 app.ico 的图标
+    # （pywebview 的 winforms 后端只设了 Form.Icon，影响标题栏/Alt+Tab，不设 AUMID）。
+    # 此调用必须在创建任何窗口之前执行、只执行一次，故放在 _run_desktop 最开头。
+    if platform.system() == "Windows":
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("sj.autolabels.app")
 
     try:
         import webview
