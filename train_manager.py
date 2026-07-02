@@ -19,9 +19,27 @@ import subprocess
 import threading
 from collections import deque
 
+from detector import read_config, write_config
+
 RUNNER_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "train_runner.py")
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
 DEFAULT_VAL_RATIO = 0.2
+
+
+def _persist_best_model(result):
+    """训练成功后把 best.pt 路径写入 config，供模型验证页读取（需求 6 方案 2）。
+    持久化失败不阻塞训练收尾。"""
+    if not result:
+        return
+    weights = result.get("weights")
+    if not weights or not os.path.isfile(weights):
+        return
+    try:
+        cfg = read_config()
+        cfg["lastBestModel"] = os.path.abspath(weights)
+        write_config(cfg)
+    except Exception:
+        pass
 
 
 class TrainManager:
@@ -295,6 +313,7 @@ class TrainManager:
             elif rc == 0:
                 self._state = "done"
                 self._result = self._read_result()
+                _persist_best_model(self._result)
             else:
                 self._state = "error"
                 result = self._read_result()

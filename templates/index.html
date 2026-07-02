@@ -640,44 +640,37 @@
                     <div class="bg-on-surface/50 backdrop-blur-sm px-xl py-md flex items-center justify-between z-20">
                         <!-- Validation Mode Switcher -->
                         <div class="flex bg-surface-container-low p-1 rounded-lg border border-outline-variant">
-                            <button class="px-6 py-1.5 rounded-md text-sm font-bold bg-white text-primary shadow-sm" type="button">图片验证</button>
-                            <button class="px-6 py-1.5 rounded-md text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors" type="button">视频验证</button>
+                            <button id="evalModeImage" class="px-6 py-1.5 rounded-md text-sm font-bold bg-white text-primary shadow-sm" type="button">图片验证</button>
+                            <button id="evalModeVideo" class="px-6 py-1.5 rounded-md text-sm font-medium text-on-surface-variant cursor-not-allowed opacity-60" type="button" title="视频验证开发中" disabled>视频验证</button>
                         </div>
                         <!-- Metrics Bar -->
                         <div class="flex gap-md">
                             <div class="px-6 py-1.5 bg-surface-container-lowest/90 backdrop-blur rounded-lg shadow-sm border border-outline-variant flex items-baseline gap-2">
                                 <span class="text-[9px] uppercase tracking-wider text-on-surface-variant font-bold">mAP@0.5</span>
-                                <span id="evalMap" class="text-md font-bold text-primary">0.892</span>
+                                <span id="evalMap" class="text-md font-bold text-primary">—</span>
                             </div>
                             <div class="px-6 py-1.5 bg-surface-container-lowest/90 backdrop-blur rounded-lg shadow-sm border border-outline-variant flex items-baseline gap-2">
                                 <span class="text-[9px] uppercase tracking-wider text-on-surface-variant font-bold">Precision</span>
-                                <span id="evalPrecision" class="text-md font-bold text-on-surface">94.5%</span>
+                                <span id="evalPrecision" class="text-md font-bold text-on-surface">—</span>
                             </div>
                             <div class="px-6 py-1.5 bg-surface-container-lowest/90 backdrop-blur rounded-lg shadow-sm border border-outline-variant flex items-baseline gap-2">
                                 <span class="text-[9px] uppercase tracking-wider text-on-surface-variant font-bold">Recall</span>
-                                <span id="evalRecall" class="text-md font-bold text-on-surface">91.2%</span>
+                                <span id="evalRecall" class="text-md font-bold text-on-surface">—</span>
                             </div>
                         </div>
                     </div>
                     <!-- Main Validation Area（视频/图像预览舞台 + 检测框覆盖层 + 播放器控制条） -->
                     <div class="flex-1 relative flex items-center justify-center overflow-hidden p-md group">
                         <div class="relative w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border-4 border-surface-variant/20">
-                            <!-- 预览底图：占位样图，接入验证数据后由 JS 替换为实际图片 -->
-                            <img id="evalPreviewImage" class="w-full h-full object-cover opacity-80"
-                                alt="验证预览"
-                                src="https://lh3.googleusercontent.com/aida-public/AB6AXuCsr5hmAqVp4cZBYZ6JqmqxR9zyfg4BLpk5rAzvwinhWiOSorUFj_FTAXPppIMB9v7e6GXaw2LV2-TMLtUjnNYR4posUPrQ0pIMEIH82iblmBL89AdaIR0z7l2MFEqaZKVdg9mNaicRqtFo0Kd9sylYDUgF2HC9sGCjj_QwKoEHkt7folidCFa5ekSwYK6MRGJ0as0CK_OeqDaAF2Bp7gDCeUO2Qxsa84bjAldMT_1RyFxYZn-CSVSJRcBFVHeFlN0eR9vDVXqi6Y6_" />
-                            <!-- Bounding Box Overlays（检测层：接入数据后由 JS 动态渲染） -->
-                            <div id="evalBoxOverlay" class="video-overlay">
-                                <div class="bounding-box" style="top: 25%; left: 45%; width: 15%; height: 40%;">
-                                    <div class="box-label">行人 0.98</div>
-                                </div>
-                                <div class="bounding-box" style="top: 35%; left: 15%; width: 25%; height: 35%; border-color: #ff9800;">
-                                    <div class="box-label" style="background: #ff9800;">车辆 0.94</div>
-                                </div>
-                                <div class="bounding-box" style="top: 60%; left: 70%; width: 8%; height: 25%;">
-                                    <div class="box-label">行人 0.89</div>
-                                </div>
+                            <!-- 预览底图：默认隐藏，由 eval.js 在选中 val 图或推理出结果时显示 -->
+                            <img id="evalPreviewImage" class="w-full h-full object-cover opacity-80 hidden" alt="验证预览" />
+                            <!-- 空状态层：val/ 无图时显示 -->
+                            <div id="evalPreviewEmpty" class="absolute inset-0 flex flex-col items-center justify-center gap-2 text-white/40 pointer-events-none">
+                                <span class="material-symbols-outlined" style="font-size:48px">image_not_supported</span>
+                                <span class="text-sm">请将验证图片放入项目的 val 文件夹</span>
                             </div>
+                            <!-- Bounding Box Overlays（检测层：由 eval.js 按推理结果动态渲染） -->
+                            <div id="evalBoxOverlay" class="video-overlay"></div>
                             <!-- Professional Video Player Controls（hover 浮现的控制条） -->
                             <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-md flex flex-col gap-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                                 <div class="h-1.5 w-full bg-white/20 rounded-full relative cursor-pointer group/progress">
@@ -735,10 +728,10 @@
                         <div class="flex items-center gap-lg">
                             <div class="flex items-center gap-2">
                                 <span class="size-2 rounded-full bg-green-500 animate-pulse"></span>
-                                <span id="evalGpuStatus">GPU 运行正常: NVIDIA A100 (12GB/40GB)</span>
+                                <span id="evalGpuStatus">模型未加载</span>
                             </div>
                             <div class="w-px h-3 bg-white/20"></div>
-                            <span id="evalLatency">推理延迟: 14ms</span>
+                            <span id="evalLatency">—</span>
                         </div>
                         <div class="flex items-center gap-md">
                             <a class="hover:text-white transition-colors cursor-pointer" href="#">使用指南</a>
@@ -750,7 +743,7 @@
                 <section class="w-64 bg-surface-container-lowest border-l border-outline-variant flex flex-col overflow-y-auto shrink-0">
                     <div class="p-md border-b border-outline-variant shrink-0">
                         <h3 class="font-bold text-body-md text-on-surface">模型验证控制</h3>
-                        <p class="text-[11px] text-on-surface-variant mt-0.5" id="evalModelName">YOLOv8-Vision-V4</p>
+                        <p class="text-[11px] text-on-surface-variant mt-0.5" id="evalModelName">未定位到训练产物</p>
                     </div>
                     <div class="p-md flex flex-col gap-sm shrink-0">
                         <button class="w-full py-3 bg-primary text-on-primary rounded-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-sm" id="startValidation" type="button">
@@ -785,25 +778,18 @@
                         <div class="p-sm bg-surface-container rounded-xl border border-outline-variant shrink-0">
                             <h4 class="text-label-md font-bold text-on-surface mb-2">验证进度</h4>
                             <div class="h-2 w-full bg-outline-variant rounded-full overflow-hidden">
-                                <div class="h-full bg-primary w-[65%]" id="evalProgressBar"></div>
+                                <div class="h-full bg-primary w-0 transition-all duration-200" id="evalProgressBar"></div>
                             </div>
                             <div class="flex justify-between text-[10px] mt-2">
-                                <span class="text-on-surface-variant" id="evalProgressText">81/124 张</span>
-                                <span class="text-primary font-bold" id="evalProgressPct">65%</span>
+                                <span class="text-on-surface-variant" id="evalProgressText">0/0 张</span>
+                                <span class="text-primary font-bold" id="evalProgressPct">0%</span>
                             </div>
                         </div>
                         <!-- Running Logs -->
                         <div class="flex-1 flex flex-col min-h-[200px] overflow-hidden mb-4">
                             <h4 class="text-label-md font-bold text-on-surface mb-2 px-1">运行日志</h4>
                             <div id="evalLogBox" class="flex-1 bg-surface-container-high rounded-lg p-md font-mono text-[14px] leading-relaxed overflow-y-auto space-y-2 border border-outline-variant">
-                                <p class="text-green-600 font-bold">[INFO] 模型加载成功</p>
-                                <p class="text-on-surface-variant">[INFO] 正在处理 img_082.jpg...</p>
-                                <p class="text-on-surface-variant font-medium text-primary-container bg-primary/5 rounded px-1">[DET] 检出目标: 2x 行人, 1x 车辆</p>
-                                <p class="text-on-surface-variant">[INFO] 正在处理 img_083.jpg...</p>
-                                <p class="text-on-surface-variant font-medium text-primary-container bg-primary/5 rounded px-1">[DET] 检出目标: 4x 车辆</p>
-                                <p class="text-on-surface-variant">[INFO] 正在处理 img_084.jpg...</p>
-                                <p class="text-on-surface-variant">[INFO] 正在同步数据至云端...</p>
-                                <p class="text-on-surface-variant">[INFO] 延迟监控: 正常 (14ms)</p>
+                                <!-- 由 eval.js 按运行过程实时追加 -->
                             </div>
                         </div>
                     </div>

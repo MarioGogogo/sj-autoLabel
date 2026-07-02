@@ -20,6 +20,7 @@ import queue
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 import re
 import string
+import glob
 
 from flask import (
     Flask,
@@ -468,6 +469,18 @@ def api_model_status():
         "device": detector.device if loaded else None,
         "labels": detector.labels[:20] if loaded else [],
     })
+
+
+@app.route("/api/model/unload", methods=["POST"])
+def api_model_unload():
+    """卸载当前 YOLO/ONNX 模型，释放显存（需求 7：停止验证时调用）。SAM 不受影响。"""
+    global LOADED_MODEL
+    try:
+        detector.unload()
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"卸载失败：{e}"}), 500
+    LOADED_MODEL = {"path": None, "name": None, "format": None, "loaded_at": None}
+    return jsonify({"ok": True})
 
 
 # ===================== 环境检测 + 配置 =====================
@@ -1226,6 +1239,154 @@ def api_eval_val_image(filename):
     if not os.path.exists(os.path.join(val_dir, safe)):
         return jsonify({"ok": False, "error": "图片不存在"}), 404
     return send_from_directory(val_dir, safe)
+
+
+# ---- best.pt 定位 + 训练指标读取（模型验证页「开始验证」用） ----
+
+def _locate_best_model():
+    """定位验证用的 best.pt：优先 config.lastBestModel（训练完成时写入），兜底 glob。
+    返回 (path, source) 或 (None, None)；source ∈ {"config", "scan"}。"""
+    # 1. config 持久化路径（train_manager._finalize 在训练成功后写入）
+    try:
+        cfg_path = read_config().get("lastBestModel")
+    except Exception:
+        cfg_path = None
+    if cfg_path and os.path.isfile(cfg_path):
+        return cfg_path, "config"
+    # 2. 扫描项目 runs/ 下 mtime 最新的 best.pt
+    if ACTIVE_PROJECT:
+        cand = glob.glob(os.path.join(ACTIVE_PROJECT, "runs", "**", "weights", "best.pt"), recursive=True)
+        cand = [c for c in cand if os.path.isfile(c)]
+        if cand:
+            cand.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+            return cand[0], "scan"
+    return None, None
+
+
+def _read_train_metrics(best_path):
+    """从 best.pt 推导 run_dir，读 results.csv 取最佳 epoch 的 mAP50/precision/recall。
+    best.pt 位于 <run_dir>/weights/best.pt → run_dir = dirname(dirname(best_path))。
+    csv 缺失/解析失败返回 None（前端据此把顶部指标留空）。"""
+    if not best_path:
+        return None
+    run_dir = os.path.dirname(os.path.dirname(os.path.abspath(best_path)))
+    csv_path = os.path.join(run_dir, "results.csv")
+    if not os.path.isfile(csv_path):
+        return None
+    try:
+        import csv as _csv
+        with open(csv_path, "r", encoding="utf-8") as f:
+            reader = _csv.DictReader(f)
+            cols = reader.fieldnames or []
+            rows = list(reader)
+        if not rows:
+            return None
+    except Exception:
+        return None
+
+    # 按子串匹配列名，兼容新旧 ultralytics（metrics/mAP50(B) / metrics/mAP50-95(B) 等）
+    def find_col(want):
+        for c in cols:
+            cl = c.lower().strip()
+            if want == "map50":
+                if "map50" in cl and "95" not in cl:
+                    return c
+            elif want == "map5095":
+                if "map50" in cl and "95" in cl:
+                    return c
+            elif want in cl:
+                return c
+        return None
+
+    def fval(row, c):
+        if not c:
+            return None
+        try:
+            return float((row.get(c) or "").strip())
+        except Exception:
+            return None
+
+    col_m50 = find_col("map50")
+    col_m5095 = find_col("map5095")
+    col_p = find_col("precision")
+    col_r = find_col("recall")
+    col_epoch = find_col("epoch")
+
+    # 选最佳行：优先 mAP50-95 最大（≈ultralytics fitness），否则 mAP50 最大，否则最后一行
+    best_row = rows[-1]
+    for c in (col_m5095, col_m50):
+        if not c:
+            continue
+        scored = [(r, fval(r, c)) for r in rows]
+        scored = [v for v in scored if v[1] is not None]
+        if scored:
+            best_row = max(scored, key=lambda v: v[1])[0]
+            break
+
+    return {
+        "map50": fval(best_row, col_m50),
+        "map5095": fval(best_row, col_m5095),
+        "precision": fval(best_row, col_p),
+        "recall": fval(best_row, col_r),
+        "epoch": fval(best_row, col_epoch),
+        "source": "results.csv",
+    }
+
+
+@app.route("/api/eval/model")
+def api_eval_model():
+    """返回模型验证用的模型信息：best.pt 定位 + 训练指标（results.csv）+ 当前加载态。
+    前端进入验证页 / 点「开始验证」时调用，一次拿全定位与指标。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    best_path, source = _locate_best_model()
+    metrics = _read_train_metrics(best_path) if best_path else None
+    return jsonify({
+        "ok": True,
+        "bestPath": best_path,
+        "bestName": os.path.basename(best_path) if best_path else None,
+        "bestSource": source,           # "config" | "scan" | null
+        "loaded": detector.is_loaded,
+        "metrics": metrics,             # {map50, map5095, precision, recall, epoch, source} | None
+    })
+
+
+@app.route("/api/eval/detect/<path:image_name>", methods=["POST"])
+def api_eval_detect(image_name):
+    """对 val/ 验证集单张推理（与 /api/detect 区别仅在图目录：val/ 而非 images/）。
+    force=True：验证场景每张实跑，不走 detector._detected_images 去重缓存。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    if not detector.is_loaded:
+        return jsonify({"ok": False, "error": "模型未加载，请先点「开始验证」"}), 400
+
+    safe = os.path.basename(image_name)
+    img_path = os.path.join(_val_dir(), safe)
+    if not os.path.isfile(img_path):
+        return jsonify({"ok": False, "error": "图片不存在"}), 404
+
+    data = request.get_json(silent=True) or {}
+    conf = max(0.0, min(1.0, float(data.get("conf", 0.5))))
+    colors = _read_colors()
+
+    try:
+        t0 = __import__("time").time()
+        raw_boxes, cached = detector.predict(img_path, safe, conf=conf, force=True)
+        elapsed = round((__import__("time").time() - t0) * 1000)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"推理失败：{e}"}), 500
+
+    for b in raw_boxes:
+        b.setdefault("score", 100)
+        b.setdefault("hex", colors.get(b.get("label", ""), "#003d9b"))
+
+    return jsonify({
+        "ok": True,
+        "boxes": raw_boxes,
+        "cached": cached,
+        "elapsed_ms": elapsed,
+        "device": detector.device,
+    })
 
 
 # ===================== 模型训练 =====================

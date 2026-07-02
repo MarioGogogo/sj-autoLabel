@@ -76,6 +76,19 @@ class ModelHolder:
         except Exception:
             self.labels = []
 
+    def unload(self):
+        """释放模型引用并尽量回收显存（对应 detector.unload）。"""
+        self.model = None
+        self.format = None
+        self.labels = []
+        self.device = "cpu"
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     def predict(self, image_path: str, conf: float = 0.5):
         if self.format == ".pt":
             return self._predict_pt(image_path, conf)
@@ -296,6 +309,10 @@ class WorkerHandler(BaseHTTPRequestHandler):
             elif self.path == "/unload_sam":
                 sam_holder.unload()
                 self._send_json({"ok": True, "variant": sam_holder.variant})
+
+            elif self.path == "/unload":
+                holder.unload()
+                self._send_json({"ok": True})
 
             elif self.path == "/shutdown":
                 self._send_json({"ok": True})

@@ -772,6 +772,28 @@ class Detector:
             raise RuntimeError("SAM 模型未加载，请先加载")
         return self._sam_holder.segment(image_path, points, labels)
 
+    def unload(self):
+        """卸载当前 YOLO/ONNX 模型，释放引用与显存（SAM 不受影响）。"""
+        if self._use_worker:
+            # worker 模式：通知 worker 侧置空模型 + empty_cache，否则 is_loaded 仍为 true
+            if self._worker_proc and self._worker_proc.poll() is None:
+                status, data = self._worker_request("POST", "/unload", {}, timeout=30)
+                if status != 200 or not data.get("ok"):
+                    raise RuntimeError(data.get("error", "模型卸载失败"))
+        else:
+            # 进程内：置空引用，尽量回收显存
+            self.model = None
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+        self.model_path = None
+        self.model_format = None
+        self.labels = []
+        self._detected_images.clear()
+
     def unload_sam(self):
         """卸载 SAM 模型，释放显存（不影响 YOLO）。"""
         if self._use_worker:
