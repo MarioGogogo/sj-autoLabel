@@ -629,24 +629,201 @@
             </aside>
         </div>
 
-        <!-- ===== 阶段 3：模型验证（占位，即将上线） ===== -->
-        <div id="stage-eval" class="stage-view hidden stage-placeholder">
-            <div class="stage-ph-card">
-                <div class="stage-ph-icon"><span class="material-symbols-outlined">fact_check</span></div>
-                <h2 class="stage-ph-title">模型验证</h2>
-                <p class="stage-ph-sub">在验证集上评估训练所得模型的精度与泛化能力</p>
-                <ul class="stage-ph-list">
-                    <li><span class="material-symbols-outlined">check_circle</span>mAP / Precision / Recall 指标</li>
-                    <li><span class="material-symbols-outlined">check_circle</span>预测 vs 标注 逐图对比</li>
-                    <li><span class="material-symbols-outlined">check_circle</span>混淆矩阵与错误样本分析</li>
-                </ul>
-                <span class="stage-ph-badge"><span class="material-symbols-outlined">schedule</span>该阶段即将上线</span>
-                <div>
-                    <button class="stage-ph-back" type="button" data-back-stage="annotate">
-                        <span class="material-symbols-outlined">arrow_back</span>返回智能标注
-                    </button>
-                </div>
-            </div>
+        <!-- ===== 阶段 3：模型验证（复刻 check.html，去掉顶部导航 header） ===== -->
+        <!-- 保留 id="stage-eval" + class="stage-view" 以兼容 bindStageNav() 的 hidden 切换机制 -->
+        <div id="stage-eval" class="stage-view hidden flex-1 min-w-0">
+            <!-- Main Workspace：左 中间垂直主区 / 右 控制边栏 -->
+            <main class="flex-1 flex overflow-hidden">
+                <!-- ============ 中间垂直主区（深色舞台 + 模式/指标 + 验证列表 + 状态条） ============ -->
+                <section class="flex-1 flex flex-col min-w-0 bg-on-surface relative">
+                    <!-- Mode Switcher & Metrics Header -->
+                    <div class="bg-on-surface/50 backdrop-blur-sm px-xl py-md flex items-center justify-between z-20">
+                        <!-- Validation Mode Switcher -->
+                        <div class="flex bg-surface-container-low p-1 rounded-lg border border-outline-variant">
+                            <button class="px-6 py-1.5 rounded-md text-sm font-bold bg-white text-primary shadow-sm" type="button">图片验证</button>
+                            <button class="px-6 py-1.5 rounded-md text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors" type="button">视频验证</button>
+                        </div>
+                        <!-- Metrics Bar -->
+                        <div class="flex gap-md">
+                            <div class="px-6 py-1.5 bg-surface-container-lowest/90 backdrop-blur rounded-lg shadow-sm border border-outline-variant flex items-baseline gap-2">
+                                <span class="text-[9px] uppercase tracking-wider text-on-surface-variant font-bold">mAP@0.5</span>
+                                <span id="evalMap" class="text-md font-bold text-primary">0.892</span>
+                            </div>
+                            <div class="px-6 py-1.5 bg-surface-container-lowest/90 backdrop-blur rounded-lg shadow-sm border border-outline-variant flex items-baseline gap-2">
+                                <span class="text-[9px] uppercase tracking-wider text-on-surface-variant font-bold">Precision</span>
+                                <span id="evalPrecision" class="text-md font-bold text-on-surface">94.5%</span>
+                            </div>
+                            <div class="px-6 py-1.5 bg-surface-container-lowest/90 backdrop-blur rounded-lg shadow-sm border border-outline-variant flex items-baseline gap-2">
+                                <span class="text-[9px] uppercase tracking-wider text-on-surface-variant font-bold">Recall</span>
+                                <span id="evalRecall" class="text-md font-bold text-on-surface">91.2%</span>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Main Validation Area（视频/图像预览舞台 + 检测框覆盖层 + 播放器控制条） -->
+                    <div class="flex-1 relative flex items-center justify-center overflow-hidden p-md group">
+                        <div class="relative w-full max-w-5xl aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border-4 border-surface-variant/20">
+                            <!-- 预览底图：占位样图，接入验证数据后由 JS 替换为实际图片 -->
+                            <img id="evalPreviewImage" class="w-full h-full object-cover opacity-80"
+                                alt="验证预览"
+                                src="https://lh3.googleusercontent.com/aida-public/AB6AXuCsr5hmAqVp4cZBYZ6JqmqxR9zyfg4BLpk5rAzvwinhWiOSorUFj_FTAXPppIMB9v7e6GXaw2LV2-TMLtUjnNYR4posUPrQ0pIMEIH82iblmBL89AdaIR0z7l2MFEqaZKVdg9mNaicRqtFo0Kd9sylYDUgF2HC9sGCjj_QwKoEHkt7folidCFa5ekSwYK6MRGJ0as0CK_OeqDaAF2Bp7gDCeUO2Qxsa84bjAldMT_1RyFxYZn-CSVSJRcBFVHeFlN0eR9vDVXqi6Y6_" />
+                            <!-- Bounding Box Overlays（检测层：接入数据后由 JS 动态渲染） -->
+                            <div id="evalBoxOverlay" class="video-overlay">
+                                <div class="bounding-box" style="top: 25%; left: 45%; width: 15%; height: 40%;">
+                                    <div class="box-label">行人 0.98</div>
+                                </div>
+                                <div class="bounding-box" style="top: 35%; left: 15%; width: 25%; height: 35%; border-color: #ff9800;">
+                                    <div class="box-label" style="background: #ff9800;">车辆 0.94</div>
+                                </div>
+                                <div class="bounding-box" style="top: 60%; left: 70%; width: 8%; height: 25%;">
+                                    <div class="box-label">行人 0.89</div>
+                                </div>
+                            </div>
+                            <!-- Professional Video Player Controls（hover 浮现的控制条） -->
+                            <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-md flex flex-col gap-sm opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                                <div class="h-1.5 w-full bg-white/20 rounded-full relative cursor-pointer group/progress">
+                                    <div class="absolute inset-y-0 left-0 w-[45%] bg-primary rounded-full flex items-center justify-end">
+                                        <div class="size-3 bg-white rounded-full shadow-lg scale-0 group-hover/progress:scale-100 transition-transform"></div>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between text-white">
+                                    <div class="flex items-center gap-md">
+                                        <button class="hover:text-primary transition-colors" type="button">
+                                            <span class="material-symbols-outlined">play_arrow</span>
+                                        </button>
+                                        <button class="hover:text-primary transition-colors" type="button">
+                                            <span class="material-symbols-outlined">skip_next</span>
+                                        </button>
+                                        <button class="hover:text-primary transition-colors" type="button">
+                                            <span class="material-symbols-outlined">volume_up</span>
+                                        </button>
+                                        <span class="text-xs font-mono">02:14 / 05:00</span>
+                                    </div>
+                                    <div class="flex items-center gap-md">
+                                        <button class="text-[10px] border border-white/40 px-2 py-0.5 rounded hover:bg-white/10" type="button">1.0x</button>
+                                        <button class="hover:text-primary transition-colors" type="button">
+                                            <span class="material-symbols-outlined">settings</span>
+                                        </button>
+                                        <button class="hover:text-primary transition-colors" type="button">
+                                            <span class="material-symbols-outlined">fullscreen</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Bottom: Validation List（横向缩略图列表） -->
+                    <div class="h-44 bg-surface-container-low border-t border-outline-variant flex flex-col shrink-0">
+                        <div class="px-md py-2 border-b border-outline-variant flex justify-between items-center bg-surface-container-lowest">
+                            <div class="flex items-center">
+                                <h3 class="font-bold text-label-md">验证数据列表 (<span id="evalListCount">0</span>)</h3>
+                                <button id="evalValRefreshBtn" type="button" title="刷新验证图片"
+                                    class="ml-1 w-7 h-7 flex items-center justify-center rounded-md text-on-surface-variant hover:text-primary hover:bg-primary/10 transition-all">
+                                    <span class="material-symbols-outlined text-[18px]">refresh</span>
+                                </button>
+                            </div>
+                            <button class="text-primary flex items-center gap-1 text-label-sm font-bold" type="button">
+                                <span class="material-symbols-outlined text-[16px]">expand_less</span>
+                                显示全部
+                            </button>
+                        </div>
+                        <div id="evalThumbList" class="flex-1 overflow-x-auto flex items-center gap-md px-md py-sm">
+                            <!-- 由 eval.js 渲染：val/ 验证图片缩略图（空时显示提示卡片） -->
+                        </div>
+                    </div>
+                    <!-- Footer Status（验证页内部状态条：GPU / 延迟） -->
+                    <div class="h-10 bg-on-surface/90 backdrop-blur-md border-t border-white/10 flex items-center justify-between px-xl text-white/70 text-[11px] shrink-0">
+                        <div class="flex items-center gap-lg">
+                            <div class="flex items-center gap-2">
+                                <span class="size-2 rounded-full bg-green-500 animate-pulse"></span>
+                                <span id="evalGpuStatus">GPU 运行正常: NVIDIA A100 (12GB/40GB)</span>
+                            </div>
+                            <div class="w-px h-3 bg-white/20"></div>
+                            <span id="evalLatency">推理延迟: 14ms</span>
+                        </div>
+                        <div class="flex items-center gap-md">
+                            <a class="hover:text-white transition-colors cursor-pointer" href="#">使用指南</a>
+                            <a class="hover:text-white transition-colors cursor-pointer" href="#">API文档</a>
+                        </div>
+                    </div>
+                </section>
+                <!-- ============ 右侧控制边栏 ============ -->
+                <section class="w-64 bg-surface-container-lowest border-l border-outline-variant flex flex-col overflow-y-auto shrink-0">
+                    <div class="p-md border-b border-outline-variant shrink-0">
+                        <h3 class="font-bold text-body-md text-on-surface">模型验证控制</h3>
+                        <p class="text-[11px] text-on-surface-variant mt-0.5" id="evalModelName">YOLOv8-Vision-V4</p>
+                    </div>
+                    <div class="p-md flex flex-col gap-sm shrink-0">
+                        <button class="w-full py-3 bg-primary text-on-primary rounded-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.98] transition-all shadow-sm" id="startValidation" type="button">
+                            <span class="material-symbols-outlined">play_arrow</span>
+                            <span class="text-md">开始验证</span>
+                        </button>
+                        <button class="w-full py-3 border border-error text-error rounded-lg font-bold flex items-center justify-center gap-2 hover:bg-error/5 active:scale-[0.98] transition-all" id="stopValidation" type="button">
+                            <span class="material-symbols-outlined">stop</span>
+                            <span class="text-md">停止验证</span>
+                        </button>
+                    </div>
+                    <div class="px-md flex flex-col gap-md flex-1">
+                        <!-- Confidence Threshold（全局默认 + 按类别覆盖） -->
+                        <div class="p-sm bg-surface-container rounded-xl border border-outline-variant shrink-0">
+                            <div class="flex items-center justify-between mb-2">
+                                <h4 class="text-label-md font-bold text-on-surface">置信度阈值</h4>
+                                <span id="evalConfMode" class="text-[9px] text-on-surface-variant font-mono">全局默认</span>
+                            </div>
+                            <input id="evalConfSlider" class="w-full accent-primary h-1.5 rounded-lg appearance-none bg-outline-variant" max="100" min="0" type="range" value="50" />
+                            <div class="flex justify-between text-[10px] text-on-surface-variant mt-1 font-mono">
+                                <span>0.00</span>
+                                <span id="evalConfVal" class="text-primary font-bold">0.50</span>
+                                <span>1.00</span>
+                            </div>
+                            <button id="evalConfPerClassBtn" type="button"
+                                class="mt-2 w-full py-1.5 border border-primary/40 text-primary hover:bg-primary/5 rounded-md text-[11px] font-bold flex items-center justify-center gap-1 transition-all">
+                                <span class="material-symbols-outlined text-[14px]">tune</span>
+                                按类别调整阈值 <span id="evalClassCount">(0)</span>
+                            </button>
+                        </div>
+                        <!-- Progress Bar -->
+                        <div class="p-sm bg-surface-container rounded-xl border border-outline-variant shrink-0">
+                            <h4 class="text-label-md font-bold text-on-surface mb-2">验证进度</h4>
+                            <div class="h-2 w-full bg-outline-variant rounded-full overflow-hidden">
+                                <div class="h-full bg-primary w-[65%]" id="evalProgressBar"></div>
+                            </div>
+                            <div class="flex justify-between text-[10px] mt-2">
+                                <span class="text-on-surface-variant" id="evalProgressText">81/124 张</span>
+                                <span class="text-primary font-bold" id="evalProgressPct">65%</span>
+                            </div>
+                        </div>
+                        <!-- Running Logs -->
+                        <div class="flex-1 flex flex-col min-h-[200px] overflow-hidden mb-4">
+                            <h4 class="text-label-md font-bold text-on-surface mb-2 px-1">运行日志</h4>
+                            <div id="evalLogBox" class="flex-1 bg-surface-container-high rounded-lg p-md font-mono text-[14px] leading-relaxed overflow-y-auto space-y-2 border border-outline-variant">
+                                <p class="text-green-600 font-bold">[INFO] 模型加载成功</p>
+                                <p class="text-on-surface-variant">[INFO] 正在处理 img_082.jpg...</p>
+                                <p class="text-on-surface-variant font-medium text-primary-container bg-primary/5 rounded px-1">[DET] 检出目标: 2x 行人, 1x 车辆</p>
+                                <p class="text-on-surface-variant">[INFO] 正在处理 img_083.jpg...</p>
+                                <p class="text-on-surface-variant font-medium text-primary-container bg-primary/5 rounded px-1">[DET] 检出目标: 4x 车辆</p>
+                                <p class="text-on-surface-variant">[INFO] 正在处理 img_084.jpg...</p>
+                                <p class="text-on-surface-variant">[INFO] 正在同步数据至云端...</p>
+                                <p class="text-on-surface-variant">[INFO] 延迟监控: 正常 (14ms)</p>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Experiment Toggle -->
+                    <div class="p-md bg-surface-container-high mt-auto">
+                        <div class="flex items-center gap-3">
+                            <div class="size-7 bg-primary-container rounded flex items-center justify-center">
+                                <span class="material-symbols-outlined text-primary scale-75">science</span>
+                            </div>
+                            <div class="flex-1">
+                                <div class="text-label-sm font-bold text-on-surface">实验对比模式</div>
+                                <div class="text-[9px] text-on-surface-variant">对比 V3 模型性能</div>
+                            </div>
+                            <div class="w-8 h-4 bg-outline-variant rounded-full relative flex items-center px-0.5 cursor-pointer" id="evalExpToggle">
+                                <div class="size-3 bg-white rounded-full shadow-sm"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </main>
         </div>
     </main>
     <!-- ===== 全局浮层（脱离 stage 切换，任意阶段可用） ===== -->
@@ -799,6 +976,50 @@
             </div>
         </div>
     </div>
+    <!-- 类别置信度阈值弹窗（模型验证页专用：每类别独立阈值，复刻 presetDialog 三段式） -->
+    <div id="evalThresholdDialog"
+        class="hidden fixed inset-0 z-[125] flex items-center justify-center p-md bg-on-surface/40 backdrop-blur-sm">
+        <div class="w-[560px] max-w-[96vw] max-h-[calc(100vh-2rem)] flex flex-col bg-surface-container-lowest rounded-xl border border-outline-variant shadow-2xl">
+            <!-- 标题栏 -->
+            <div class="flex items-center gap-sm px-md py-sm border-b border-outline-variant">
+                <span class="material-symbols-outlined text-primary">tune</span>
+                <h3 class="font-headline-sm text-headline-sm text-on-surface flex-1">类别置信度阈值</h3>
+                <button id="evalThrCloseBtn" type="button" title="关闭"
+                    class="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-primary/10 text-on-surface-variant transition-all">
+                    <span class="material-symbols-outlined text-[20px]">close</span>
+                </button>
+            </div>
+            <!-- 工具栏：全局默认滑块 + 批量重置 -->
+            <div class="flex items-center justify-between gap-md px-md py-sm border-b border-outline-variant bg-surface-container-low">
+                <div class="flex items-center gap-sm min-w-0">
+                    <span class="text-[10px] text-on-surface-variant font-mono uppercase tracking-wider shrink-0">全局默认</span>
+                    <input id="evalThrDefaultSlider" type="range" min="0" max="100" value="50"
+                        class="w-28 accent-primary h-1.5 rounded-lg appearance-none bg-outline-variant shrink-0" />
+                    <span id="evalThrDefaultVal" class="text-[11px] text-primary font-bold font-mono w-9 shrink-0">0.50</span>
+                </div>
+                <button id="evalThrResetAllBtn" type="button" title="所有类别回到全局默认"
+                    class="text-[10px] text-primary hover:opacity-80 font-mono flex items-center gap-1 shrink-0">
+                    <span class="material-symbols-outlined text-[14px]">restart_alt</span>全部重置为默认
+                </button>
+            </div>
+            <!-- 类别列表（滚动） -->
+            <div id="evalThrList" class="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-md space-y-xs">
+                <!-- 由 eval.js 渲染：每行 = 色点 + 类名 + 滑块 + 数值 -->
+            </div>
+            <!-- 空状态（未打开项目 / 无类别） -->
+            <div id="evalThrEmpty" class="hidden flex-1 flex flex-col items-center justify-center py-lg text-center">
+                <span class="material-symbols-outlined text-outline text-4xl mb-sm">folder_off</span>
+                <p class="font-label-mono text-[11px] text-outline">请先打开项目以加载类别列表</p>
+            </div>
+            <!-- 底部按钮 -->
+            <div class="flex gap-sm p-md border-t border-outline-variant">
+                <button id="evalThrCancelBtn" type="button"
+                    class="flex-1 py-sm border border-outline-variant text-on-surface-variant hover:bg-surface-variant font-label-caps text-label-caps rounded-lg transition-all">取消</button>
+                <button id="evalThrApplyBtn" type="button"
+                    class="flex-1 py-sm bg-primary text-on-primary hover:opacity-90 font-label-caps text-label-caps rounded-lg transition-all shadow-sm">应用</button>
+            </div>
+        </div>
+    </div>
     <!-- 通用轻提示 Toast -->
     <div id="toast"
         class="hidden fixed bottom-16 left-1/2 -translate-x-1/2 z-[140] px-md py-sm bg-inverse-surface text-inverse-on-surface rounded-lg shadow-xl font-body-md text-sm">
@@ -842,6 +1063,8 @@
     <script src="{{ url_for('static', filename='vendor/xterm/xterm.js') }}"></script>
     <script src="{{ url_for('static', filename='vendor/xterm/xterm-addon-fit.js') }}"></script>
     <script src="{{ url_for('static', filename='js/train.js') }}"></script>
+    <!-- 模型验证阶段：当前为 UI 复刻（演示微交互），业务功能后续接入 -->
+    <script src="{{ url_for('static', filename='js/eval.js') }}"></script>
 </body>
 
 </html>

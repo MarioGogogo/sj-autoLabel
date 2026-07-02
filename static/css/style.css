@@ -560,3 +560,46 @@ body {
 .stage-ph-back .material-symbols-outlined {
     font-size: 18px;
 }
+
+/* ===== 模型验证页（#stage-eval）专用样式（复刻 check.html） =====
+   全部限定在 #stage-eval 作用域内，避免与标注页的 .bbox / .canvas-stage 体系冲突。 */
+#stage-eval .video-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+#stage-eval .bounding-box {
+    position: absolute;
+    border: 2px solid #0052cc;
+    background: rgba(0, 82, 204, 0.1);
+}
+
+#stage-eval .box-label {
+    position: absolute;
+    top: -24px;
+    left: -2px;
+    background: #0052cc;
+    color: #ffffff;
+    padding: 2px 6px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+/* 验证页内滚动条：复刻 check.html 的细滚动条（独立于全局 .custom-scrollbar）。 */
+#stage-eval ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+#stage-eval ::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+#stage-eval ::-webkit-scrollbar-thumb {
+    background: #c3c6d6;
+    border-radius: 10px;
+}

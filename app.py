@@ -89,6 +89,16 @@ def _thumbs_dir():
     return os.path.join(ACTIVE_PROJECT, ".thumbnails")
 
 
+def _val_dir():
+    """验证集目录：项目根下的 val/（与 images/ 平级，存放用户提供的验证图片）。"""
+    return os.path.join(ACTIVE_PROJECT, "val")
+
+
+def _val_thumbs_dir():
+    """val 专用缩略图缓存（与 images/ 的 .thumbnails 隔离，避免同名图冲突）。"""
+    return os.path.join(ACTIVE_PROJECT, ".thumbnails-val")
+
+
 def _classes_file():
     return os.path.join(ACTIVE_PROJECT, "classes.txt")
 
@@ -271,6 +281,34 @@ def _scan_images():
         })
     # 清理孤儿缩略图（images/ 里已删的图）。
     _cleanup_orphan_thumbs({img["name"] for img in images})
+    return images
+
+
+def _scan_val_images():
+    """扫描 val/ 生成验证图片清单。record = {name, url, thumb_url, size}。
+
+    与 _scan_images 的区别：验证集无标注概念，不查 labels/ 状态，只返回文件本身。
+    """
+    images = []
+    val_dir = _val_dir()
+    if not os.path.isdir(val_dir):
+        return images
+    for name in sorted(os.listdir(val_dir), key=_natural_key):
+        if os.path.splitext(name)[1].lower() not in ALLOWED_EXT:
+            continue
+        full = os.path.join(val_dir, name)
+        if not os.path.isfile(full):
+            continue
+        try:
+            size = os.path.getsize(full)
+        except OSError:
+            size = 0
+        images.append({
+            "name": name,
+            "url": f"/api/eval/val_image/{name}",
+            "thumb_url": f"/api/eval/val_thumb/{name}",
+            "size": size,
+        })
     return images
 
 
@@ -1119,6 +1157,75 @@ def api_normalize_negatives():
             except OSError:
                 pass
     return jsonify({"ok": True, "normalized": normalized, "cleaned": cleaned})
+
+
+# ===================== 模型验证（val 验证集） =====================
+
+@app.route("/api/eval/val_images")
+def api_eval_val_images():
+    """扫描项目 val/ 目录返回验证图片清单；目录不存在则自动创建。
+
+    返回 {ok, images, valPath, created, empty}：
+      - created=True：本次调用刚创建的空 val/，前端据此提示用户放图。
+      - empty=True：val/ 存在但无图片。
+    """
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+
+    val_dir = _val_dir()
+    created = False
+    if not os.path.isdir(val_dir):
+        os.makedirs(val_dir, exist_ok=True)
+        created = True
+
+    images = _scan_val_images()
+    return jsonify({
+        "ok": True,
+        "images": images,
+        "valPath": val_dir,
+        "created": created,
+        "empty": len(images) == 0,
+    })
+
+
+@app.route("/api/eval/val_thumb/<path:filename>")
+def api_eval_val_thumb(filename):
+    """验证集缩略图（160px 最长边，按需生成缓存到 .thumbnails-val/）。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    safe = os.path.basename(filename)
+    src = os.path.join(_val_dir(), safe)
+    if not os.path.isfile(src):
+        return jsonify({"ok": False, "error": "图片不存在"}), 404
+
+    thumbs_dir = _val_thumbs_dir()
+    os.makedirs(thumbs_dir, exist_ok=True)
+    thumb_name = os.path.splitext(safe)[0] + ".jpg"
+    dst = os.path.join(thumbs_dir, thumb_name)
+
+    # 缩略图不存在或比原图旧 → 重新生成。
+    try:
+        need_gen = not os.path.isfile(dst) or os.path.getmtime(src) > os.path.getmtime(dst)
+    except OSError:
+        need_gen = True
+    if need_gen:
+        if not _make_thumbnail(src, dst):
+            # 生成失败，回退到原图。
+            return send_from_directory(_val_dir(), safe)
+
+    return send_from_directory(thumbs_dir, thumb_name)
+
+
+@app.route("/api/eval/val_image/<path:filename>")
+def api_eval_val_image(filename):
+    """验证集原图（验证大图区使用；basename 双重防穿越）。"""
+    if not ACTIVE_PROJECT:
+        return jsonify({"ok": False, "error": "请先打开项目"}), 400
+    safe = os.path.basename(filename)
+    val_dir = _val_dir()
+    if not os.path.exists(os.path.join(val_dir, safe)):
+        return jsonify({"ok": False, "error": "图片不存在"}), 404
+    return send_from_directory(val_dir, safe)
 
 
 # ===================== 模型训练 =====================
